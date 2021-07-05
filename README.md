@@ -3,6 +3,10 @@
 ALI_FOLDER_NAME = "sync_folder"
 LOCAL_FOLDER_NAME = "C:\\同步盘"
 ```
+* 同步环境
+```shell
+pip install -r requirement.txt
+```
 * 运行项目
 ```shell
 python run.py
