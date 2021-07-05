@@ -7,7 +7,7 @@ import time
 import requests
 
 from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS
-from utils.file import get_file_info, compute_part_num
+from utils.file import get_file_info, compute_part_num, get_file_hash, parse_js_data
 from utils.qrcodeUtils import create_qr
 
 
@@ -188,7 +188,7 @@ class AliPan:
                 self.refresh()
                 break
             if qr_code_status == 'EXPIRED':
-                AliPan.info.append( "二维码已经过期")
+                AliPan.info.append("二维码已经过期")
                 self.get_login_qr()
                 break
             time.sleep(5)
@@ -230,6 +230,31 @@ class AliPan:
                     except Exception as e:
                         print(e)
 
+    def trash_file(self, file_id):
+        json = {"drive_id": self.drive_id, "file_id": file_id}
+        self.post("https://api.aliyundrive.com/v2/recyclebin/trash", json=json)
+
+    def sync_path_exists(self, items, path):
+        ali_file_dict = {item["name"]: item for item in items}
+        for full_path_item, path_item in [(os.path.join(path, path_item), path_item) for path_item in os.listdir(path)]:
+            if os.path.isfile(full_path_item):
+                file_hash = get_file_hash(full_path_item)
+                ali_file_info = ali_file_dict.get(path_item, None)
+                if ali_file_info:
+                    if file_hash.upper() != ali_file_info["content_hash"].upper():
+                        # 版本不一致需要更新版本，查看更新时间更新为最新的
+                        local_update_at = os.path.getatime(full_path_item)
+                        ali_updated_at = parse_js_data(ali_file_info["updated_at"]) / 1000
+                        if local_update_at > ali_updated_at:
+                            # 本地最新上传
+                            print("1本地最新上传", full_path_item)
+                            self.trash_file(ali_file_dict[path_item]["file_id"])
+                            self.upload_file(ali_file_dict[path_item]["parent_file_id"], full_path_item)
+                        else:
+                            # 远程下载
+                            print("2远程最新下载", full_path_item)
+                            self.download_file(path, path_item, ali_file_dict[path_item]["file_id"])
+
     def sync_path(self, local_path, parent_file_id):
         items = self.file_list(parent_file_id).get("items", [])
         ali_pan_file_list = set(items["name"] for items in items if items['type'] == 'file')
@@ -241,7 +266,8 @@ class AliPan:
 
         upload_file_list = local_file_list - ali_pan_file_list
         download_file_list = ali_pan_file_list - local_file_list
-
+        # 改变的进行同步
+        self.sync_path_exists(items, local_path)
         # 同步到本地
         for download_path in ali_pan_path_list:
             full_download_path = os.path.join(local_path, download_path)
@@ -259,7 +285,3 @@ class AliPan:
         # 同步到服务器
         for download_file in upload_file_list:
             self.upload_file(parent_file_id, os.path.join(local_path, download_file))
-
-
-if __name__ == '__main__':
-    s = "goto=https://www.aliyundrive.com/sign/callback?code=71bf2dc74893448eb1dc1b8d02c6e713&domain_id=bj29&state=%7B%22origin%22%3A%22https%3A%2F%2Fwww.aliyundrive.com%22%7D"
