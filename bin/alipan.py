@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import pprint
 import re
 import time
 from collections import defaultdict
@@ -269,16 +270,17 @@ class YxhpyAliPan(BaseAliPan):
                         ali_updated_at = parse_js_data(ali_file_info["updated_at"]) / 1000
                         if local_update_at > ali_updated_at:
                             # 本地最新上传
-                            print("1本地最新上传", full_path_item)
+                            print("本地文件更改上传最新版本", full_path_item)
                             self.trash_file(ali_file_dict[path_item]["file_id"])
                             self.upload_file(ali_file_dict[path_item]["parent_file_id"], full_path_item)
                         else:
                             # 远程下载
-                            print("2远程最新下载", full_path_item)
+                            print("网盘文件被更新下载最新版本", full_path_item)
                             self.download_file(path, path_item, ali_file_dict[path_item]["file_id"])
 
     def sync_path(self, local_path, parent_file_id):
         items = self.file_list(parent_file_id).get("items", [])
+        ali_file_dict = {item["name"]: item for item in items}
         ali_pan_file_list = set(items["name"] for items in items if items['type'] == 'file')
         ali_pan_path_list = set(items["name"] for items in items if items['type'] == 'folder')
         local_file_list = set(
@@ -294,27 +296,38 @@ class YxhpyAliPan(BaseAliPan):
         for download_path in ali_pan_path_list:
             full_download_path = os.path.join(local_path, download_path)
             full_ali_pan_path_id = self.get_file_id(download_path, parent_file_id)
-            if self.start_file_list[full_download_path]:
+            if self.start_file_list[full_download_path] and not os.path.exists(full_download_path):
                 self.trash_file(full_ali_pan_path_id)
                 self.start_file_list[full_download_path] = False
+                print("本地文件夹被删除同步到网盘" + full_download_path)
             else:
                 if not os.path.exists(full_download_path):
+                    print("网盘文件夹被同步到本地" + full_download_path)
                     os.mkdir(full_download_path)
                 self.sync_path(full_download_path, full_ali_pan_path_id)
         for upload_path in local_path_list:
             full_upload_path = os.path.join(local_path, upload_path)
-            self.start_file_list[full_upload_path] = True
-            new_path_id = self.create_with_folders(parent_file_id, {"name": upload_path}, mode="dir")["file_id"]
-            self.sync_path(full_upload_path, new_path_id)
+            upload_path_info = ali_file_dict.get(upload_path, None)
+            if not upload_path_info:
+                print("本地文件夹同步到网盘" + full_upload_path)
+                self.start_file_list[full_upload_path] = True
+                path_id = self.create_with_folders(parent_file_id, {"name": upload_path}, mode="dir")["file_id"]
+            else:
+                path_id = upload_path_info["file_id"]
+            self.sync_path(full_upload_path, path_id)
         for download_file in download_file_list:
             file_id = self.folders[download_file]["file_id"]
             full_file = os.path.join(local_path, download_file)
             if self.start_file_list[full_file]:
                 self.trash_file(file_id)
                 self.start_file_list[full_file] = False
+                print("本地文件被删除同步到网盘" + full_file)
             else:
+                print("网盘文件同步到本地" + full_file)
                 self.download_file(local_path, download_file, file_id)
         # 同步到服务器
         for download_file in upload_file_list:
-            self.start_file_list[os.path.join(local_path, download_file)] = True
-            self.upload_file(parent_file_id, os.path.join(local_path, download_file))
+            full_upload_file = os.path.join(local_path, download_file)
+            print("本地文件同步到网盘" + full_upload_file)
+            self.start_file_list[full_upload_file] = True
+            self.upload_file(parent_file_id, full_upload_file)

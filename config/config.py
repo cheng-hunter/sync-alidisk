@@ -6,7 +6,7 @@ DEFAULT_HEADERS = {
     "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36"
 }
 # 10秒同步一次
-SYNC_DELAY = 10
+SYNC_DELAY = 1
 
 WORK_PATH = os.path.dirname(os.path.dirname(__file__))
 

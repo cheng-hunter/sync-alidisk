@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 
 def main():
-    ali_pan = YxhpyAliPan()
+    ali_pan = YxhpyAliPan("ef34fe0510394538bf3624211b7f738c")
     file_id = ali_pan.get_file_id(ALI_FOLDER_NAME)
     while True:
         YxhpyAliPan.info.append("同步开始，请勿在同步的时候删除文件")
