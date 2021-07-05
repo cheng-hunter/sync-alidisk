@@ -3,15 +3,15 @@ import json
 import os
 import re
 import time
-
+from collections import defaultdict
 import requests
 
-from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS
+from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME
 from utils.file import get_file_info, compute_part_num, get_file_hash, parse_js_data
 from utils.qrcodeUtils import create_qr
 
 
-class AliPan:
+class BaseAliPan:
     info = []
 
     def __init__(self, token=None):
@@ -69,10 +69,10 @@ class AliPan:
                 "pre_hash": file_info.get("pre_hash")}
         response = self.post("https://api.aliyundrive.com/adrive/v2/file/createWithFolders", data)
         if response.status_code == 409:  # 表示已经存在文件了
-            AliPan.info.append("文件已经存在于服务器了")
+            BaseAliPan.info.append("文件已经存在于服务器了")
             return False, response.json()
         else:
-            AliPan.info.append("这是一个新文件")
+            BaseAliPan.info.append("这是一个新文件")
             return True, response.json()
 
     def complete(self, file_id, upload_id):
@@ -81,7 +81,7 @@ class AliPan:
                 "file_id": file_id
                 }
         response = self.post("https://api.aliyundrive.com/v2/file/complete", json=data)
-        AliPan.info.append(response.json())
+        BaseAliPan.info.append(response.json())
 
     def create_with_folders(self, parent_file_id, file_info: dict, mode="file"):
         data = {}
@@ -136,7 +136,7 @@ class AliPan:
         status, data = self.file_exists(parent_file_id, file_info)
         if not status:
             # 如果文件已经存在于数据库之中，那么就开始秒传
-            AliPan.info.append(self.create_with_folders(parent_file_id, file_info))
+            BaseAliPan.info.append(self.create_with_folders(parent_file_id, file_info))
         else:
             part_info_list = data.get("part_info_list")
             file_id = data.get("file_id")
@@ -152,8 +152,8 @@ class AliPan:
                 print(e)
             # 确认发送完毕
             self.complete(file_id, upload_id)
-        AliPan.info.append(time.time() - start_time)
-        AliPan.info.append("完成")
+        BaseAliPan.info.append(time.time() - start_time)
+        BaseAliPan.info.append("完成")
 
     def get_login_qr(self):
         self.login_session = requests.session()
@@ -164,7 +164,7 @@ class AliPan:
         data = response.json()['content']['data']
         self.login_qr_check["ck"] = data['ck']
         self.login_qr_check["t"] = data['t']
-        AliPan.info.append("登录地址" + data['codeContent'])
+        BaseAliPan.info.append("登录地址" + data['codeContent'])
         create_qr(data['codeContent'])
         self.get_qr_status()
 
@@ -176,11 +176,11 @@ class AliPan:
             data = response.json()["content"]['data']
             qr_code_status = data['qrCodeStatus']
             if qr_code_status == 'NEW':
-                AliPan.info.append("等待扫码登录")
+                BaseAliPan.info.append("等待扫码登录")
             if qr_code_status == 'SCANED':
-                AliPan.info.append("请到手机端确认登录")
+                BaseAliPan.info.append("请到手机端确认登录")
             if qr_code_status == 'CONFIRMED':
-                AliPan.info.append("登录成功")
+                BaseAliPan.info.append("登录成功")
                 pds_login_result = json.loads(base64.b64decode(data['bizExt']).decode("gbk"))['pds_login_result']
                 access_token = pds_login_result['accessToken']
                 code = self.get_token_login_code(access_token)
@@ -188,7 +188,7 @@ class AliPan:
                 self.refresh()
                 break
             if qr_code_status == 'EXPIRED':
-                AliPan.info.append("二维码已经过期")
+                BaseAliPan.info.append("二维码已经过期")
                 self.get_login_qr()
                 break
             time.sleep(5)
@@ -234,6 +234,28 @@ class AliPan:
         json = {"drive_id": self.drive_id, "file_id": file_id}
         self.post("https://api.aliyundrive.com/v2/recyclebin/trash", json=json)
 
+
+class YxhpyAliPan(BaseAliPan):
+    def __init__(self, token=None):
+        BaseAliPan.__init__(self, token)
+        self.start_file_list = defaultdict(bool)
+        self.start(LOCAL_FOLDER_NAME)
+    '''
+    启动的时候遍历所有本地文件
+    '''
+    def start(self, path):
+        path_list = os.listdir(path)
+        for path_item in path_list:
+            full_path = os.path.join(path, path_item)
+            if os.path.isfile(full_path):
+                self.start_file_list[full_path] = True
+            else:
+                self.start_file_list[full_path] = True
+                self.start(full_path)
+    '''
+    用于同步已经存在的文件
+    '''
+
     def sync_path_exists(self, items, path):
         ali_file_dict = {item["name"]: item for item in items}
         for full_path_item, path_item in [(os.path.join(path, path_item), path_item) for path_item in os.listdir(path)]:
@@ -271,17 +293,28 @@ class AliPan:
         # 同步到本地
         for download_path in ali_pan_path_list:
             full_download_path = os.path.join(local_path, download_path)
-            if not os.path.exists(full_download_path):
-                os.mkdir(full_download_path)
             full_ali_pan_path_id = self.get_file_id(download_path, parent_file_id)
-            self.sync_path(full_download_path, full_ali_pan_path_id)
+            if self.start_file_list[full_download_path]:
+                self.trash_file(full_ali_pan_path_id)
+                self.start_file_list[full_download_path] = False
+            else:
+                if not os.path.exists(full_download_path):
+                    os.mkdir(full_download_path)
+                self.sync_path(full_download_path, full_ali_pan_path_id)
         for upload_path in local_path_list:
             full_upload_path = os.path.join(local_path, upload_path)
+            self.start_file_list[full_upload_path] = True
             new_path_id = self.create_with_folders(parent_file_id, {"name": upload_path}, mode="dir")["file_id"]
             self.sync_path(full_upload_path, new_path_id)
         for download_file in download_file_list:
             file_id = self.folders[download_file]["file_id"]
-            self.download_file(local_path, download_file, file_id)
+            full_file = os.path.join(local_path, download_file)
+            if self.start_file_list[full_file]:
+                self.trash_file(file_id)
+                self.start_file_list[full_file] = False
+            else:
+                self.download_file(local_path, download_file, file_id)
         # 同步到服务器
         for download_file in upload_file_list:
+            self.start_file_list[os.path.join(local_path, download_file)] = True
             self.upload_file(parent_file_id, os.path.join(local_path, download_file))

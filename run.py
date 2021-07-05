@@ -1,5 +1,5 @@
 
-from bin.alipan import AliPan
+from bin.alipan import YxhpyAliPan
 import time
 from flask import Flask, render_template
 from config.config import SYNC_DELAY, ALI_FOLDER_NAME, LOCAL_FOLDER_NAME
@@ -9,12 +9,12 @@ app = Flask(__name__)
 
 
 def main():
-    ali_pan = AliPan()
+    ali_pan = YxhpyAliPan()
     file_id = ali_pan.get_file_id(ALI_FOLDER_NAME)
     while True:
-        AliPan.info.append("同步开始，请勿在同步的时候删除文件")
+        YxhpyAliPan.info.append("同步开始，请勿在同步的时候删除文件")
         ali_pan.sync_path(LOCAL_FOLDER_NAME, file_id)
-        AliPan.info.append(f"同步完成，等待{SYNC_DELAY}秒")
+        YxhpyAliPan.info.append(f"同步完成，等待{SYNC_DELAY}秒")
         time.sleep(SYNC_DELAY)
 
 
@@ -22,7 +22,7 @@ def main():
 def index():
     data = {"ALI_FOLDER_NAME": ALI_FOLDER_NAME,
             "LOCAL_FOLDER_NAME": LOCAL_FOLDER_NAME,
-            "info": AliPan.info[-3:]}
+            "info": YxhpyAliPan.info[-3:]}
     return render_template("index.html", **data)
 
 
