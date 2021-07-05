@@ -1,4 +1,3 @@
-import pprint
 
 from bin.alipan import AliPan
 import time
