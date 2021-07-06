@@ -1,14 +1,13 @@
 import base64
 import json
 import os
-import pprint
 import re
 import threading
 import time
 from collections import defaultdict
 import requests
 
-from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME, SYNC_DELAY, ALI_FOLDER_NAME
+from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME, ALI_FOLDER_NAME
 from utils.file import get_file_info, compute_part_num, get_file_hash, parse_js_data
 from utils.qrcodeUtils import create_qr
 
