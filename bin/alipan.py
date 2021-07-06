@@ -344,4 +344,7 @@ class YxhpyAliPan(BaseAliPan):
             if self.start_file_list[full_file] and not os.path.exists(full_file):
                 self.trash_file(self.get_parent_file_id(full_file))
                 self.start_file_list[full_file] = False
+                for i in self.start_file_list:
+                    if i.startswith(full_file):
+                        self.start_file_list[i] = False
                 print("本地文件(夹)被删除同步到网盘" + full_file)
