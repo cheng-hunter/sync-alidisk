@@ -3,11 +3,12 @@ import json
 import os
 import pprint
 import re
+import threading
 import time
 from collections import defaultdict
 import requests
 
-from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME
+from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME, SYNC_DELAY, ALI_FOLDER_NAME
 from utils.file import get_file_info, compute_part_num, get_file_hash, parse_js_data
 from utils.qrcodeUtils import create_qr
 
@@ -25,6 +26,7 @@ class BaseAliPan:
         self.part_size = UPLOAD_PART_SIZE
         self.login_qr_check = {}
         self.login_session = None
+        self.lock = threading.Lock()
         if token:
             self.refresh()
         else:
@@ -235,15 +237,25 @@ class BaseAliPan:
         json = {"drive_id": self.drive_id, "file_id": file_id}
         self.post("https://api.aliyundrive.com/v2/recyclebin/trash", json=json)
 
+    def get_parent_file_id(self, full_path):
+        path_list = full_path.replace(LOCAL_FOLDER_NAME, "").strip(os.path.sep).split(os.path.sep)
+        parent_file_id = self.get_file_id(ALI_FOLDER_NAME)
+        if path_list[0]:
+            for path in path_list:
+                parent_file_id = self.get_file_id(path, parent_file_id)
+        return parent_file_id
+
 
 class YxhpyAliPan(BaseAliPan):
     def __init__(self, token=None):
         BaseAliPan.__init__(self, token)
         self.start_file_list = defaultdict(bool)
         self.start(LOCAL_FOLDER_NAME)
+
     '''
     启动的时候遍历所有本地文件
     '''
+
     def start(self, path):
         path_list = os.listdir(path)
         for path_item in path_list:
@@ -253,6 +265,7 @@ class YxhpyAliPan(BaseAliPan):
             else:
                 self.start_file_list[full_path] = True
                 self.start(full_path)
+
     '''
     用于同步已经存在的文件
     '''
@@ -296,14 +309,11 @@ class YxhpyAliPan(BaseAliPan):
         for download_path in ali_pan_path_list:
             full_download_path = os.path.join(local_path, download_path)
             full_ali_pan_path_id = self.get_file_id(download_path, parent_file_id)
-            if self.start_file_list[full_download_path] and not os.path.exists(full_download_path):
-                self.trash_file(full_ali_pan_path_id)
-                self.start_file_list[full_download_path] = False
-                print("本地文件夹被删除同步到网盘" + full_download_path)
-            else:
+            if not self.start_file_list[full_download_path]:
                 if not os.path.exists(full_download_path):
                     print("网盘文件夹被同步到本地" + full_download_path)
                     os.mkdir(full_download_path)
+                    self.start_file_list[full_download_path] = True
                 self.sync_path(full_download_path, full_ali_pan_path_id)
         for upload_path in local_path_list:
             full_upload_path = os.path.join(local_path, upload_path)
@@ -318,16 +328,20 @@ class YxhpyAliPan(BaseAliPan):
         for download_file in download_file_list:
             file_id = self.folders[download_file]["file_id"]
             full_file = os.path.join(local_path, download_file)
-            if self.start_file_list[full_file]:
-                self.trash_file(file_id)
-                self.start_file_list[full_file] = False
-                print("本地文件被删除同步到网盘" + full_file)
-            else:
+            if not self.start_file_list[full_file]:
                 print("网盘文件同步到本地" + full_file)
                 self.download_file(local_path, download_file, file_id)
+                self.start_file_list[full_file] = True
         # 同步到服务器
         for download_file in upload_file_list:
             full_upload_file = os.path.join(local_path, download_file)
             print("本地文件同步到网盘" + full_upload_file)
             self.start_file_list[full_upload_file] = True
             self.upload_file(parent_file_id, full_upload_file)
+
+    def remove_sync(self):
+        for full_file in self.start_file_list:
+            if self.start_file_list[full_file] and not os.path.exists(full_file):
+                self.trash_file(self.get_parent_file_id(full_file))
+                self.start_file_list[full_file] = False
+                print("本地文件(夹)被删除同步到网盘" + full_file)
