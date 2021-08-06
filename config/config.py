@@ -11,4 +11,6 @@ SYNC_DELAY = 10
 WORK_PATH = os.path.dirname(os.path.dirname(__file__))
 
 ALI_FOLDER_NAME = "sync_folder"
-LOCAL_FOLDER_NAME = "C:\\同步盘"
+LOCAL_FOLDER_NAME = "C:\\Users\\liuguohao\\Downloads"
+
+MAX_THREAD_NUM = 10

@@ -5,9 +5,12 @@ import re
 import threading
 import time
 from collections import defaultdict
+from concurrent.futures.thread import ThreadPoolExecutor
+
 import requests
 
-from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME, ALI_FOLDER_NAME
+from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME, ALI_FOLDER_NAME, SYNC_DELAY, \
+    MAX_THREAD_NUM
 from utils.file import get_file_info, compute_part_num, get_file_hash, parse_js_data
 from utils.qrcodeUtils import create_qr
 
@@ -324,26 +327,54 @@ class YxhpyAliPan(BaseAliPan):
             else:
                 path_id = upload_path_info["file_id"]
             self.sync_path(full_upload_path, path_id)
+        pool = ThreadPoolExecutor(max_workers=MAX_THREAD_NUM)
+        tasks = []
         for download_file in download_file_list:
             file_id = self.folders[download_file]["file_id"]
             full_file = os.path.join(local_path, download_file)
             if not self.start_file_list[full_file]:
                 print("网盘文件同步到本地" + full_file)
-                self.download_file(local_path, download_file, file_id)
+                tasks.append(pool.submit(self.download_file, args=(download_file, file_id)))
                 self.start_file_list[full_file] = True
+        while [task.running() for task in tasks].count(True) > 0:
+            pass
         # 同步到服务器
+        tasks = []
         for download_file in upload_file_list:
             full_upload_file = os.path.join(local_path, download_file)
             print("本地文件同步到网盘" + full_upload_file)
             self.start_file_list[full_upload_file] = True
-            self.upload_file(parent_file_id, full_upload_file)
+            tasks.append(pool.submit(self.upload_file, args=(parent_file_id, full_upload_file)))
+        while [task.running() for task in tasks].count(True) > 0:
+            pass
 
     def remove_sync(self):
+        pool = ThreadPoolExecutor(max_workers=MAX_THREAD_NUM)
+        tasks = []
         for full_file in self.start_file_list:
             if self.start_file_list[full_file] and not os.path.exists(full_file):
-                self.trash_file(self.get_parent_file_id(full_file))
+                tasks.append(pool.submit(self.trash_file, args=(self.get_parent_file_id(full_file))))
                 self.start_file_list[full_file] = False
                 for i in self.start_file_list:
                     if i.startswith(full_file):
                         self.start_file_list[i] = False
                 print("本地文件(夹)被删除同步到网盘" + full_file)
+        while [task.running() for task in tasks].count(True) > 0:
+            pass
+
+    def start_sync(self):
+        file_id = self.get_file_id(ALI_FOLDER_NAME)
+        while True:
+            self.sync_path(LOCAL_FOLDER_NAME, file_id)
+            self.remove_sync()
+            time.sleep(SYNC_DELAY)
+
+    def watch_remove(self, t):
+        is_break = False
+        while not is_break:
+            for full_file in self.start_file_list:
+                if self.start_file_list[full_file] and not os.path.exists(full_file):
+                    t.stop()
+                    is_break = True
+                    break
+            time.sleep(0.1)
