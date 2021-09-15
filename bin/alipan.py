@@ -290,7 +290,7 @@ class YxhpyAliPan(BaseAliPan):
                     if file_hash.upper() != ali_file_info["content_hash"].upper():
                         # 版本不一致需要更新版本，查看更新时间更新为最新的
                         local_update_at = os.path.getatime(full_path_item)
-                        ali_updated_at = parse_js_data(ali_file_info["updated_at"]) / 1000
+                        ali_updated_at = parse_js_data(ali_file_info["updated_at"])
                         if local_update_at > ali_updated_at:
                             # 本地最新上传
                             logging.info("本地文件更改上传最新版本" + full_path_item)

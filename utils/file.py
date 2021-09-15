@@ -1,5 +1,7 @@
 import base64
 import hashlib
+from datetime import datetime
+
 import execjs
 import os
 from collections import defaultdict
@@ -32,7 +34,8 @@ def get_file_info(file_path: str, access_token):
 
 
 def parse_js_data(time):
-    return execjs.eval(f'Date.parse("{time}") + 8 * 60 * 60')
+    t = datetime.strptime(time, "%Y-%m-%dT%H:%M:%S.%fZ")
+    return t.timestamp()
 
 
 # 将所有文件添加到set中，如果
