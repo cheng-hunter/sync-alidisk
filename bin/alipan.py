@@ -1,16 +1,18 @@
 import base64
 import json
+import logging
 import os
 import re
 import threading
 import time
 from collections import defaultdict
 from concurrent.futures.thread import ThreadPoolExecutor
+from pprint import pprint
 
 import requests
 
 from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME, ALI_FOLDER_NAME, SYNC_DELAY, \
-    MAX_THREAD_NUM
+    MAX_THREAD_NUM, WORK_PATH
 from utils.file import get_file_info, compute_part_num, get_file_hash, parse_js_data
 from utils.qrcodeUtils import create_qr
 
@@ -29,10 +31,10 @@ class BaseAliPan:
         self.login_qr_check = {}
         self.login_session = None
         self.lock = threading.Lock()
-        if token:
-            self.refresh()
-        else:
+        if not token or not self.refresh():
             self.get_login_qr()
+        else:
+            logging.info("token正确登录成功，无需扫描")
 
     def post(self, url, json=None):
         response = requests.post(url, json=json,
@@ -57,7 +59,10 @@ class BaseAliPan:
             self.refresh_token = data.get("refresh_token")
             self.drive_id = data.get("default_drive_id")
             self.headers["authorization"] = f"{self.token_type} {self.token}"
-
+            return True
+        else:
+            logging.error("token错误或已经过期，请扫描登录")
+            return False
     '''
     判断文件是否是已经存在了
     '''
@@ -154,7 +159,7 @@ class BaseAliPan:
                         requests.put(upload_url, data=data)
                     f.close()
             except Exception as e:
-                print(e)
+                logging.error(e)
             # 确认发送完毕
             self.complete(file_id, upload_id)
         BaseAliPan.info.append(time.time() - start_time)
@@ -216,6 +221,8 @@ class BaseAliPan:
         }
         response = self.login_session.post("https://api.aliyundrive.com/token/get", json=json)
         self.refresh_token = response.json()['refresh_token']
+        #     将 refresh_token 备份到本地
+        open(os.path.join(WORK_PATH, "static", "refresh_token"), mode='w', encoding="utf-8").write(self.refresh_token)
 
     def download_file(self, dir_path, file_name, file_id):
         data = {"drive_id": self.drive_id, "file_id": file_id}
@@ -233,7 +240,7 @@ class BaseAliPan:
                         with open(os.path.join(dir_path, file_name), "wb") as f:
                             f.write(response.content)
                     except Exception as e:
-                        print(e)
+                        logging.error(e)
 
     def trash_file(self, file_id):
         json = {"drive_id": self.drive_id, "file_id": file_id}
@@ -249,7 +256,8 @@ class BaseAliPan:
 
 
 class YxhpyAliPan(BaseAliPan):
-    def __init__(self, token=None):
+    def __init__(self):
+        token = open(os.path.join(WORK_PATH, "static", "refresh_token"), mode='r', encoding="utf-8").read()
         BaseAliPan.__init__(self, token)
         self.start_file_list = defaultdict(bool)
         self.start(LOCAL_FOLDER_NAME)
@@ -285,12 +293,12 @@ class YxhpyAliPan(BaseAliPan):
                         ali_updated_at = parse_js_data(ali_file_info["updated_at"]) / 1000
                         if local_update_at > ali_updated_at:
                             # 本地最新上传
-                            print("本地文件更改上传最新版本", full_path_item)
+                            logging.info("本地文件更改上传最新版本" + full_path_item)
                             self.trash_file(ali_file_dict[path_item]["file_id"])
                             self.upload_file(ali_file_dict[path_item]["parent_file_id"], full_path_item)
                         else:
                             # 远程下载
-                            print("网盘文件被更新下载最新版本", full_path_item)
+                            logging.info("网盘文件被更新下载最新版本" + full_path_item)
                             self.download_file(path, path_item, ali_file_dict[path_item]["file_id"])
 
     def sync_path(self, local_path, parent_file_id):
@@ -313,7 +321,7 @@ class YxhpyAliPan(BaseAliPan):
             full_ali_pan_path_id = self.get_file_id(download_path, parent_file_id)
             if not self.start_file_list[full_download_path]:
                 if not os.path.exists(full_download_path):
-                    print("网盘文件夹被同步到本地" + full_download_path)
+                    logging.info("网盘文件夹被同步到本地" + full_download_path)
                     os.mkdir(full_download_path)
                     self.start_file_list[full_download_path] = True
                 self.sync_path(full_download_path, full_ali_pan_path_id)
@@ -321,46 +329,35 @@ class YxhpyAliPan(BaseAliPan):
             full_upload_path = os.path.join(local_path, upload_path)
             upload_path_info = ali_file_dict.get(upload_path, None)
             if not upload_path_info:
-                print("本地文件夹同步到网盘" + full_upload_path)
+                logging.info("本地文件夹同步到网盘" + full_upload_path)
                 self.start_file_list[full_upload_path] = True
                 path_id = self.create_with_folders(parent_file_id, {"name": upload_path}, mode="dir")["file_id"]
             else:
                 path_id = upload_path_info["file_id"]
             self.sync_path(full_upload_path, path_id)
-        pool = ThreadPoolExecutor(max_workers=MAX_THREAD_NUM)
-        tasks = []
         for download_file in download_file_list:
             file_id = self.folders[download_file]["file_id"]
             full_file = os.path.join(local_path, download_file)
             if not self.start_file_list[full_file]:
-                print("网盘文件同步到本地" + full_file)
-                tasks.append(pool.submit(self.download_file, args=(download_file, file_id)))
+                logging.info("网盘文件同步到本地" + full_file)
+                self.download_file(local_path, download_file, file_id)
                 self.start_file_list[full_file] = True
-        while [task.running() for task in tasks].count(True) > 0:
-            pass
         # 同步到服务器
-        tasks = []
         for download_file in upload_file_list:
             full_upload_file = os.path.join(local_path, download_file)
-            print("本地文件同步到网盘" + full_upload_file)
+            logging.info("本地文件同步到网盘" + full_upload_file)
             self.start_file_list[full_upload_file] = True
-            tasks.append(pool.submit(self.upload_file, args=(parent_file_id, full_upload_file)))
-        while [task.running() for task in tasks].count(True) > 0:
-            pass
+            self.upload_file(parent_file_id, full_upload_file)
 
     def remove_sync(self):
-        pool = ThreadPoolExecutor(max_workers=MAX_THREAD_NUM)
-        tasks = []
         for full_file in self.start_file_list:
             if self.start_file_list[full_file] and not os.path.exists(full_file):
-                tasks.append(pool.submit(self.trash_file, args=(self.get_parent_file_id(full_file))))
+                self.trash_file(self.get_parent_file_id(full_file))
                 self.start_file_list[full_file] = False
                 for i in self.start_file_list:
                     if i.startswith(full_file):
                         self.start_file_list[i] = False
-                print("本地文件(夹)被删除同步到网盘" + full_file)
-        while [task.running() for task in tasks].count(True) > 0:
-            pass
+                logging.info("本地文件(夹)被删除同步到网盘" + full_file)
 
     def start_sync(self):
         file_id = self.get_file_id(ALI_FOLDER_NAME)

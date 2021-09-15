@@ -1,16 +1,18 @@
+import logging
+
 from bin.alipan import YxhpyAliPan
 from flask import Flask, render_template
 from config.config import ALI_FOLDER_NAME, LOCAL_FOLDER_NAME
 from threading import Thread
 
 app = Flask(__name__)
-
+logging.basicConfig(level=logging.INFO)
 
 def main():
     ali_pan = YxhpyAliPan()
-    print("同步开始，请勿在同步的时候删除文件")
+    logging.info("同步开始，请勿在同步的时候删除文件")
     ali_pan.start_sync()
-    print("同步中，检测到文件被删除，等待重新同步")
+    logging.info("同步中，检测到文件被删除，等待重新同步")
 
 
 @app.route("/")
