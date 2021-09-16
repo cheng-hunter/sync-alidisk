@@ -6,9 +6,6 @@ import re
 import threading
 import time
 from collections import defaultdict
-from concurrent.futures.thread import ThreadPoolExecutor
-from pprint import pprint
-
 import requests
 
 from config.config import UPLOAD_PART_SIZE, DEFAULT_HEADERS, LOCAL_FOLDER_NAME, ALI_FOLDER_NAME, SYNC_DELAY, \
@@ -257,7 +254,11 @@ class BaseAliPan:
 
 class YxhpyAliPan(BaseAliPan):
     def __init__(self):
-        token = open(os.path.join(WORK_PATH, "static", "refresh_token"), mode='r', encoding="utf-8").read()
+        token_path = os.path.join(WORK_PATH, "static", "refresh_token")
+        if os.path.exists(token_path):
+            token = open(token_path, mode='r', encoding="utf-8").read()
+        else:
+            token = ""
         BaseAliPan.__init__(self, token)
         self.start_file_list = defaultdict(bool)
         self.start(LOCAL_FOLDER_NAME)
