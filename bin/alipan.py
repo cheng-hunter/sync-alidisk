@@ -128,9 +128,14 @@ class BaseAliPan:
         if parent_file_id:
             json['parent_file_id'] = parent_file_id
         response = self.post("https://api.aliyundrive.com/v2/file/list", json)
-        response_json = response.json()
-        for item in response_json.get("items"):
-            self.folders[item.get('name')] = item
+        try:
+            response_json = response.json()
+            for item in response_json.get("items"):
+                self.folders[item.get('name')] = item
+        except Exception as e:
+            print(response.content)
+            print(e)
+            return {}
         return response_json
 
     def get_file_id(self, file_name, parent_file_id="root"):
