@@ -6,6 +6,7 @@ import com.yxhpy.SafeFile;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Base64;
 
 /**
@@ -51,6 +52,8 @@ public class JsonUtils {
             int available = inputStream.available();
             byte[] bytes = new byte[available];
             if (inputStream.read(bytes) > 0) {
+                SafeFile safeFile = new SafeFile();
+                safeFile.handler(bytes, false);
                 return JSONUtil.parse(new String(bytes, StandardCharsets.UTF_8)).toBean(aClass);
             }
         } catch (IOException e) {

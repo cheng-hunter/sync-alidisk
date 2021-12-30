@@ -88,15 +88,15 @@ public class BaseAliPan {
     public boolean refreshToken(String refreshToken) {
         HashMap<String, Object> map = new HashMap<>();
         map.put("refresh_token", refreshToken);
+        Request request = new Request();
         HttpResponse response = request.postJson("https://api.aliyundrive.com/token/refresh", map);
         LoginEntity loginEntity = JsonUtils.responseToBean(response, LoginEntity.class);
         PdsLoginResult pdsLoginResult = loginEntity.getPdsLoginResult();
         if (pdsLoginResult == null){
             log.warn("token已经过期，请重新登录:" + response.body());
-            request.reset();
             return false;
         }
-        request.getHeaders().put("authorization", pdsLoginResult.getTokenType() + " " + pdsLoginResult.getAccessToken());
+        this.request.getHeaders().put("authorization", pdsLoginResult.getTokenType() + " " + pdsLoginResult.getAccessToken());
         log.info("免密登录成功，无需重新扫码");
         return true;
     }
@@ -166,11 +166,16 @@ public class BaseAliPan {
             }
         }
     }
+    public void run(){
+        PdsLoginResult loginInfo = JsonUtils.readBean("loginInfo", PdsLoginResult.class);
+        String refreshToken = loginInfo.getRefreshToken();
+        if (!refreshToken(refreshToken)) {
+            startLogin();
+        }
+    }
 
     public static void main(String[] args) {
         BaseAliPan baseAliPan = new BaseAliPan();
-        if (!baseAliPan.refreshToken("515b89b0a2084323ad614e6431ed496c")) {
-            baseAliPan.startLogin();
-        }
+        baseAliPan.run();
     }
 }
