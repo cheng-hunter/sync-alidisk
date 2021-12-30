@@ -1,15 +1,32 @@
 package com.yxhpy;
+
+import cn.hutool.core.util.CharsetUtil;
+import cn.hutool.http.HttpInterceptor;
+import cn.hutool.http.HttpRequest;
 import cn.hutool.http.HttpResponse;
 import cn.hutool.log.GlobalLogFactory;
 import cn.hutool.log.Log;
+import com.yxhpy.entity.DownloadEntity;
 import com.yxhpy.entity.response.*;
 import com.yxhpy.enumCode.QrStatus;
 import com.yxhpy.utils.AnalyticalResults;
 import com.yxhpy.utils.JsonUtils;
 import com.yxhpy.utils.QrUtils;
+import com.yxhpy.utils.Url;
+import okhttp3.*;
+import okio.Okio;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.MalformedURLException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.Queue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -20,6 +37,7 @@ public class BaseAliPan {
     private final Request request;
     private PdsLoginResult loginInfo;
     private static final String R_CODE = "code=(\\w+)";
+    private static final String BASE_PATH = "D:\\sync";
     private final Log log = GlobalLogFactory.get().createLog(BaseAliPan.class);
 
     public BaseAliPan() {
@@ -89,7 +107,7 @@ public class BaseAliPan {
         Request request = new Request();
         HttpResponse response = request.postJson("https://api.aliyundrive.com/token/refresh", map);
         PdsLoginResult loginEntity = JsonUtils.responseToBean(response, PdsLoginResult.class);
-        if (loginEntity == null || loginEntity.getTokenType() == null || loginEntity.getAccessToken()  == null){
+        if (loginEntity == null || loginEntity.getTokenType() == null || loginEntity.getAccessToken() == null) {
             log.warn("token已经过期，请重新登录:" + response.body());
             return false;
         }
@@ -114,8 +132,18 @@ public class BaseAliPan {
         map.put("parent_file_id", parentFileId);
         map.put("url_expire_sec", 1600);
         map.put("video_thumbnail_process", "video/snapshot,t_0,f_jpg,ar_auto,w_300");
-        HttpResponse response = request.postJson("https://api.aliyundrive.com/v2/file/list", map);
-        return JsonUtils.responseToBean(response, FolderEntity.class);
+        while (true) {
+            HttpResponse response = request.postJson("https://api.aliyundrive.com/v2/file/list", map);
+            if (response.getStatus() == 200) {
+                return JsonUtils.responseToBean(response, FolderEntity.class);
+            }
+            // 防止429
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
     }
 
     public void startLogin() {
@@ -151,7 +179,7 @@ public class BaseAliPan {
                     return;
                 }
                 loginInfo = loginEntity.getPdsLoginResult();
-                request.getHeaders().put("authorization", loginInfo.getTokenType() + " " + loginInfo.getAccessToken());
+                request.getHttpRequest().bearerAuth(loginInfo.getAccessToken());
                 log.info("从登录获取的AccessToken获取RefreshToken");
                 String refreshToken = getRefreshToken(loginInfo.getAccessToken());
                 log.info("获取RefreshToken为：" + refreshToken);
@@ -164,10 +192,82 @@ public class BaseAliPan {
         }
     }
 
+    public void downloadFile(String path, String name, String fileId) {
+        File file = new File(path);
+        if (!file.exists()) {
+            if (file.mkdirs()) {
+                log.info("文件夹 " + path + " 不存在自动创建成功");
+            }
+        }
+        String fileName = path + File.separator + name;
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("drive_id", loginInfo.getDefaultDriveId());
+        map.put("file_id", fileId);
+        HttpResponse response = request.postJson("https://api.aliyundrive.com/v2/file/get_download_url", map);
+        FileDownloadEntity fileDownloadEntity = JsonUtils.responseToBean(response, FileDownloadEntity.class);
+        log.info("获取文件成功：" + fileDownloadEntity);
+        log.info("下载文件到" + fileName);
+        String url = fileDownloadEntity.getUrl();
+        OkHttpClient client = new OkHttpClient();
+        okhttp3.Request req = new okhttp3.Request.Builder()
+                .url(url)
+                .addHeader("Referer", "https://www.aliyundrive.com/")
+                .build();
+        //异步请求
+        try {
+            ResponseBody body = client.newCall(req).execute().body();
+            FileOutputStream fileOutputStream = new FileOutputStream(fileName);
+            if (body != null){
+                fileOutputStream.write(body.bytes());
+            }
+            log.info("下载完成" + fileName);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+//        client.newCall(req).enqueue(new Callback() {
+//            @Override
+//            public void onResponse(Call arg0, Response response) throws IOException {
+//                ResponseBody body = response.body();
+//                FileOutputStream fileOutputStream = new FileOutputStream(fileName);
+//                if (body != null){
+//                    fileOutputStream.write(body.bytes());
+//                    body.close();
+//                    fileOutputStream.close();
+//                }
+//                log.info("下载完成" + fileName);
+//            }
+//
+//            @Override
+//            public void onFailure(Call arg0, IOException arg1) {
+//                //请求失败或网络错误会执行这里
+//                System.out.println("请求失败");
+//            }
+//        });
+    }
 
-    public void run(){
+    private final Queue<DownloadEntity> downloadEntities = new LinkedBlockingQueue<>();
+
+    public void download(String parentPath, String parentPathId) {
+        FolderEntity folder = getFolderFileList(parentPathId);
+        for (ItemsEntity item : folder.getItems()) {
+            String path = parentPath + File.separator + item.getName();
+            if ("folder".equals(item.getType())) {
+                downloadEntities.offer(new DownloadEntity(path, item.getFileId()));
+            }
+            if ("file".equals(item.getType())) {
+                downloadFile(parentPath, item.getName(), item.getFileId());
+            }
+        }
+        DownloadEntity downloadEntity = downloadEntities.poll();
+        while (downloadEntity != null) {
+            download(downloadEntity.getLocalPath(), downloadEntity.getRemoteId());
+            downloadEntity = downloadEntities.poll();
+        }
+    }
+
+    public void run() {
         File file = new File("loginInfo");
-        if (file.exists()){
+        if (file.exists()) {
             PdsLoginResult loginInfo = JsonUtils.readBean("loginInfo", PdsLoginResult.class);
             String refreshToken = loginInfo.getRefreshToken();
             if (!refreshToken(refreshToken)) {
@@ -176,11 +276,9 @@ public class BaseAliPan {
         } else {
             startLogin();
         }
-        FolderEntity folder = getFolderFileList("root");
         log.info("先从服务器同步到本地，该操作只执行一次，后续本地文件会向远程同步");
-        for (ItemsEntity item : folder.getItems()) {
-            System.out.println(item);
-        }
+        download(BASE_PATH, "root");
+
     }
 
     public static void main(String[] args) {

@@ -37,8 +37,7 @@ public class Request {
                 httpRequest.form(params);
             }
         }
-        HttpResponse response = httpRequest.execute();
-        return response;
+        return  httpRequest.execute();
     }
 
     public HttpResponse post(String url, Map<String, Object> params) {
