@@ -2,15 +2,13 @@ package com.yxhpy;
 import cn.hutool.http.HttpResponse;
 import cn.hutool.log.GlobalLogFactory;
 import cn.hutool.log.Log;
-import com.yxhpy.entity.response.DataEntity;
-import com.yxhpy.entity.response.LoginEntity;
-import com.yxhpy.entity.response.PdsLoginResult;
-import com.yxhpy.entity.response.ResultEntity;
+import com.yxhpy.entity.response.*;
 import com.yxhpy.enumCode.QrStatus;
 import com.yxhpy.utils.AnalyticalResults;
 import com.yxhpy.utils.JsonUtils;
 import com.yxhpy.utils.QrUtils;
 
+import java.io.File;
 import java.util.HashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -20,7 +18,7 @@ import java.util.regex.Pattern;
  */
 public class BaseAliPan {
     private final Request request;
-    private LoginEntity loginInfo;
+    private PdsLoginResult loginInfo;
     private static final String R_CODE = "code=(\\w+)";
     private final Log log = GlobalLogFactory.get().createLog(BaseAliPan.class);
 
@@ -90,20 +88,20 @@ public class BaseAliPan {
         map.put("refresh_token", refreshToken);
         Request request = new Request();
         HttpResponse response = request.postJson("https://api.aliyundrive.com/token/refresh", map);
-        LoginEntity loginEntity = JsonUtils.responseToBean(response, LoginEntity.class);
-        PdsLoginResult pdsLoginResult = loginEntity.getPdsLoginResult();
-        if (pdsLoginResult == null){
+        PdsLoginResult loginEntity = JsonUtils.responseToBean(response, PdsLoginResult.class);
+        if (loginEntity == null || loginEntity.getTokenType() == null || loginEntity.getAccessToken()  == null){
             log.warn("token已经过期，请重新登录:" + response.body());
             return false;
         }
-        this.request.getHeaders().put("authorization", pdsLoginResult.getTokenType() + " " + pdsLoginResult.getAccessToken());
+        loginInfo = loginEntity;
+        this.request.getHttpRequest().bearerAuth(loginEntity.getAccessToken());
         log.info("免密登录成功，无需重新扫码");
         return true;
     }
 
 
-    public void getFileList(String parentFileId) {
-        String defaultDriveId = loginInfo.getPdsLoginResult().getDefaultDriveId();
+    public FolderEntity getFolderFileList(String parentFileId) {
+        String defaultDriveId = loginInfo.getDefaultDriveId();
         HashMap<String, Object> map = new HashMap<>();
         map.put("all", false);
         map.put("drive_id", defaultDriveId);
@@ -117,7 +115,7 @@ public class BaseAliPan {
         map.put("url_expire_sec", 1600);
         map.put("video_thumbnail_process", "video/snapshot,t_0,f_jpg,ar_auto,w_300");
         HttpResponse response = request.postJson("https://api.aliyundrive.com/v2/file/list", map);
-        System.out.println(response.body());
+        return JsonUtils.responseToBean(response, FolderEntity.class);
     }
 
     public void startLogin() {
@@ -152,13 +150,12 @@ public class BaseAliPan {
                     log.error("错误，获取登录信息失败");
                     return;
                 }
-                loginInfo = loginEntity;
-                PdsLoginResult pdsLoginResult = loginInfo.getPdsLoginResult();
-                request.getHeaders().put("authorization", pdsLoginResult.getTokenType() + " " + pdsLoginResult.getAccessToken());
+                loginInfo = loginEntity.getPdsLoginResult();
+                request.getHeaders().put("authorization", loginInfo.getTokenType() + " " + loginInfo.getAccessToken());
                 log.info("从登录获取的AccessToken获取RefreshToken");
-                String refreshToken = getRefreshToken(pdsLoginResult.getAccessToken());
+                String refreshToken = getRefreshToken(loginInfo.getAccessToken());
                 log.info("获取RefreshToken为：" + refreshToken);
-                loginInfo.getPdsLoginResult().setRefreshToken(refreshToken);
+                loginInfo.setRefreshToken(refreshToken);
                 log.info("将RefreshToken保存到本地");
                 JsonUtils.writeBean(loginInfo, "loginInfo");
 //                getFileList("root");
@@ -166,11 +163,23 @@ public class BaseAliPan {
             }
         }
     }
+
+
     public void run(){
-        PdsLoginResult loginInfo = JsonUtils.readBean("loginInfo", PdsLoginResult.class);
-        String refreshToken = loginInfo.getRefreshToken();
-        if (!refreshToken(refreshToken)) {
+        File file = new File("loginInfo");
+        if (file.exists()){
+            PdsLoginResult loginInfo = JsonUtils.readBean("loginInfo", PdsLoginResult.class);
+            String refreshToken = loginInfo.getRefreshToken();
+            if (!refreshToken(refreshToken)) {
+                startLogin();
+            }
+        } else {
             startLogin();
+        }
+        FolderEntity folder = getFolderFileList("root");
+        log.info("先从服务器同步到本地，该操作只执行一次，后续本地文件会向远程同步");
+        for (ItemsEntity item : folder.getItems()) {
+            System.out.println(item);
         }
     }
 

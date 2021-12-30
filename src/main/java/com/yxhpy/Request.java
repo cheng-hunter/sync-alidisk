@@ -60,4 +60,8 @@ public class Request {
     public Map<String, String> getHeaders() {
         return headers;
     }
+
+    public HttpRequest getHttpRequest() {
+        return httpRequest;
+    }
 }
