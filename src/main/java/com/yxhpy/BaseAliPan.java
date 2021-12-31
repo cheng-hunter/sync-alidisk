@@ -1,29 +1,25 @@
 package com.yxhpy;
 
-import cn.hutool.core.util.CharsetUtil;
-import cn.hutool.http.HttpInterceptor;
-import cn.hutool.http.HttpRequest;
+import cn.hutool.core.codec.Base64Encoder;
+import cn.hutool.core.io.FileUtil;
+import cn.hutool.crypto.SecureUtil;
 import cn.hutool.http.HttpResponse;
 import cn.hutool.log.GlobalLogFactory;
 import cn.hutool.log.Log;
+import cn.hutool.script.JavaScriptEngine;
 import com.yxhpy.entity.DownloadEntity;
+import com.yxhpy.entity.EncFileInfoEntity;
 import com.yxhpy.entity.response.*;
 import com.yxhpy.enumCode.QrStatus;
 import com.yxhpy.utils.AnalyticalResults;
+import com.yxhpy.utils.FileUtils;
 import com.yxhpy.utils.JsonUtils;
 import com.yxhpy.utils.QrUtils;
-import com.yxhpy.utils.Url;
 import okhttp3.*;
-import okio.Okio;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.net.MalformedURLException;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
+import javax.script.*;
+import java.io.*;
+import java.math.BigInteger;
 import java.util.HashMap;
 import java.util.Queue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -37,7 +33,10 @@ public class BaseAliPan {
     private final Request request;
     private PdsLoginResult loginInfo;
     private static final String R_CODE = "code=(\\w+)";
-    private static final String BASE_PATH = "D:\\sync";
+    private static final String BASE_PATH = "C:\\sync";
+    private static final Integer PART_SIZE = 10 * 1024 * 1024;
+    private static final String FILE_TYPE_FILE = "file";
+    private static final String FILE_TYPE_FOLDER = "folder";
     private final Log log = GlobalLogFactory.get().createLog(BaseAliPan.class);
 
     public BaseAliPan() {
@@ -78,11 +77,6 @@ public class BaseAliPan {
         }
         return null;
     }
-
-    public void getRefreshLoginStatus(String token) {
-
-    }
-
 
     public String getRefreshToken(String accessToken) {
         HashMap<String, Object> map = new HashMap<>();
@@ -144,6 +138,84 @@ public class BaseAliPan {
                 e.printStackTrace();
             }
         }
+    }
+
+    public void trashFile(String fileId) {
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("drive_id", loginInfo.getDefaultDriveId());
+        map.put("file_id", fileId);
+        HttpResponse response = request.postJson("https://api.aliyundrive.com/v2/recyclebin/trash", map);
+        log.info("删除文件：" + response.body());
+    }
+
+    public EncFileInfoEntity getFileInfo(String filePath) {
+        File file = new File(filePath);
+        String name = FileUtil.getName(file);
+        long size = FileUtil.size(file);
+        String accessToken = loginInfo.getAccessToken();
+        JavaScriptEngine instance = JavaScriptEngine.instance();
+        try (FileReader fileReader = new FileReader("en.js")) {
+            instance.eval(fileReader);
+            String limit = (String) instance.invokeFunction("h", instance.invokeFunction("m", accessToken));
+            long limitInt = new BigInteger(limit.substring(0, 16), 16).longValue() & 0xFFFFFFFFL;
+            long left = size == 0 ? size : (limitInt % size);
+            long right = Math.min(left + 8, size);
+            byte[] bytes = FileUtil.readBytes(filePath);
+            int preSize = (int) Math.min(1024, size);
+            byte[] preLimit = new byte[preSize];
+            byte[] proofCodeLimit = new byte[(int) (right - left)];
+            System.arraycopy(bytes, 0, preLimit, 0, preSize);
+            System.arraycopy(bytes, (int) left, proofCodeLimit, 0, (int) (right - left));
+            String preHash = SecureUtil.sha1(new String(preLimit));
+            String contentHash = SecureUtil.sha1(new String(bytes));
+            String proofCode = Base64Encoder.encode(proofCodeLimit);
+            return new EncFileInfoEntity(name, size, preHash, contentHash, proofCode);
+        } catch (IOException | ScriptException | NoSuchMethodException e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    public void fileExists(String parentFileId, EncFileInfoEntity fileInfo) {
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("drive_id", loginInfo.getDefaultDriveId());
+        map.put("part_info_list", FileUtils.getFileParts(fileInfo.getFileSize(), PART_SIZE));
+        map.put("parent_file_id", parentFileId);
+        map.put("name", fileInfo.getFileName());
+        map.put("type", "file");
+        map.put("check_name_mode", "auto_rename");
+        map.put("size", fileInfo.getFileSize());
+        map.put("pre_hash", fileInfo.getPreHash());
+        HttpResponse response = request.postJson("https://api.aliyundrive.com/adrive/v2/file/createWithFolders", map);
+        System.out.println(response.body());
+    }
+
+    public void createWithFolders(String parentFileId, EncFileInfoEntity fileInfo, String mode) {
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("drive_id", loginInfo.getDefaultDriveId());
+        map.put("name", fileInfo.getFileName());
+        map.put("parent_file_id", parentFileId);
+        map.put("type", mode);
+        if (FILE_TYPE_FILE.equals(mode)) {
+            map.put("part_info_list", FileUtils.getFileParts(fileInfo.getFileSize(), PART_SIZE));
+            map.put("check_name_mode", "auto_rename");
+            map.put("size", fileInfo.getFileName());
+            map.put("content_hash", fileInfo.getContentHash());
+            map.put("content_hash_name", "sha1");
+            map.put("proof_code", fileInfo.getProofCode());
+            map.put("proof_version", "v1");
+        }
+        if (FILE_TYPE_FOLDER.equals(mode)) {
+            map.put("check_name_mode", "refuse");
+        }
+        HttpResponse response = request.post("https://api.aliyundrive.com/adrive/v2/file/createWithFolders", map);
+        System.out.println(response.body());
+    }
+
+
+    public void uploadFile(String parentFileId, String filePath) {
+        EncFileInfoEntity fileInfo = getFileInfo(filePath);
+        fileExists(parentFileId, fileInfo);
     }
 
     public void startLogin() {
@@ -208,41 +280,17 @@ public class BaseAliPan {
         log.info("获取文件成功：" + fileDownloadEntity);
         log.info("下载文件到" + fileName);
         String url = fileDownloadEntity.getUrl();
-        OkHttpClient client = new OkHttpClient();
-        okhttp3.Request req = new okhttp3.Request.Builder()
-                .url(url)
-                .addHeader("Referer", "https://www.aliyundrive.com/")
-                .build();
         //异步请求
         try {
-            ResponseBody body = client.newCall(req).execute().body();
+            ResponseBody body = Request.download(url, Headers.of("Referer", "https://www.aliyundrive.com/"));
             FileOutputStream fileOutputStream = new FileOutputStream(fileName);
-            if (body != null){
+            if (body != null) {
                 fileOutputStream.write(body.bytes());
             }
             log.info("下载完成" + fileName);
         } catch (IOException e) {
             e.printStackTrace();
         }
-//        client.newCall(req).enqueue(new Callback() {
-//            @Override
-//            public void onResponse(Call arg0, Response response) throws IOException {
-//                ResponseBody body = response.body();
-//                FileOutputStream fileOutputStream = new FileOutputStream(fileName);
-//                if (body != null){
-//                    fileOutputStream.write(body.bytes());
-//                    body.close();
-//                    fileOutputStream.close();
-//                }
-//                log.info("下载完成" + fileName);
-//            }
-//
-//            @Override
-//            public void onFailure(Call arg0, IOException arg1) {
-//                //请求失败或网络错误会执行这里
-//                System.out.println("请求失败");
-//            }
-//        });
     }
 
     private final Queue<DownloadEntity> downloadEntities = new LinkedBlockingQueue<>();
@@ -277,8 +325,9 @@ public class BaseAliPan {
             startLogin();
         }
         log.info("先从服务器同步到本地，该操作只执行一次，后续本地文件会向远程同步");
-        download(BASE_PATH, "root");
-
+//        download(BASE_PATH, "root");
+        uploadFile("root", "abc");
+//        createWithFolders("root", )
     }
 
     public static void main(String[] args) {

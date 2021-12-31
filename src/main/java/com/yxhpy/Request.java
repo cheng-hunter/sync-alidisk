@@ -6,10 +6,12 @@ import cn.hutool.http.HttpResponse;
 import cn.hutool.http.Method;
 import cn.hutool.json.JSONUtil;
 import com.yxhpy.conifg.RequestConfig;
+import okhttp3.Headers;
+import okhttp3.OkHttpClient;
+import okhttp3.ResponseBody;
 
-import java.net.HttpCookie;
+import java.io.IOException;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -50,6 +52,15 @@ public class Request {
 
     public HttpResponse get(String url) {
         return request(url, Method.GET, null, false);
+    }
+
+    public static ResponseBody download(String url, Headers headers) throws IOException {
+        OkHttpClient client = new OkHttpClient();
+        okhttp3.Request req = new okhttp3.Request.Builder()
+                .url(url)
+                .headers(headers)
+                .build();
+        return client.newCall(req).execute().body();
     }
 
     public void reset(){
