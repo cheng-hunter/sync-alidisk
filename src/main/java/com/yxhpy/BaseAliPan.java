@@ -526,6 +526,5 @@ public class BaseAliPan {
     public static void main(String[] args) {
         BaseAliPan baseAliPan = new BaseAliPan();
         baseAliPan.run();
-
     }
 }

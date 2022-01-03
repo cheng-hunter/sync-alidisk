@@ -1,14 +1,10 @@
 package com.yxhpy.utils;
 
 import cn.hutool.http.HttpResponse;
-import cn.hutool.http.HttpUtil;
 import cn.hutool.json.JSONUtil;
-import com.yxhpy.Request;
-import com.yxhpy.SafeFile;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Base64;
 
 /**
