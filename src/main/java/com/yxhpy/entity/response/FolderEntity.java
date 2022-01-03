@@ -2,6 +2,7 @@ package com.yxhpy.entity.response;
 import lombok.*;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * @author liuguohao
@@ -17,4 +18,13 @@ public class FolderEntity {
     private List<ItemsEntity> items;
     private String nextMarker;
     private int punishedFileCount;
+
+    public ItemsEntity getItemByName(String name){
+        for (ItemsEntity item : items) {
+            if (Objects.equals(item.getName(), name)) {
+                return item;
+            }
+        }
+        return null;
+    }
 }

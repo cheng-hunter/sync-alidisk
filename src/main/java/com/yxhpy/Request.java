@@ -6,9 +6,7 @@ import cn.hutool.http.HttpResponse;
 import cn.hutool.http.Method;
 import cn.hutool.json.JSONUtil;
 import com.yxhpy.conifg.RequestConfig;
-import okhttp3.Headers;
-import okhttp3.OkHttpClient;
-import okhttp3.ResponseBody;
+import okhttp3.*;
 
 import java.io.IOException;
 import java.util.HashMap;
@@ -62,6 +60,16 @@ public class Request {
                 .build();
         return client.newCall(req).execute().body();
     }
+
+    public static Response upload(String url, byte[] bytes) throws IOException {
+        OkHttpClient client = new OkHttpClient();
+        okhttp3.Request req = new okhttp3.Request.Builder()
+                .put(RequestBody.create(null, bytes))
+                .url(url)
+                .build();
+        return client.newCall(req).execute();
+    }
+
 
     public void reset(){
         httpRequest.enableDefaultCookie();

@@ -2,26 +2,28 @@ package com.yxhpy;
 
 import cn.hutool.core.codec.Base64Encoder;
 import cn.hutool.core.io.FileUtil;
-import cn.hutool.crypto.SecureUtil;
-import cn.hutool.http.HttpResponse;
+import cn.hutool.core.io.watch.*;
+import cn.hutool.http.*;
 import cn.hutool.log.GlobalLogFactory;
 import cn.hutool.log.Log;
 import cn.hutool.script.JavaScriptEngine;
+import com.yxhpy.fileWatch.FileListener;
+import com.yxhpy.fileWatch.WatchRun;
 import com.yxhpy.entity.DownloadEntity;
 import com.yxhpy.entity.EncFileInfoEntity;
 import com.yxhpy.entity.response.*;
 import com.yxhpy.enumCode.QrStatus;
-import com.yxhpy.utils.AnalyticalResults;
-import com.yxhpy.utils.FileUtils;
-import com.yxhpy.utils.JsonUtils;
-import com.yxhpy.utils.QrUtils;
+import com.yxhpy.utils.*;
 import okhttp3.*;
 
 import javax.script.*;
 import java.io.*;
 import java.math.BigInteger;
-import java.util.HashMap;
-import java.util.Queue;
+import java.nio.file.Path;
+import java.nio.file.WatchEvent;
+import java.util.*;
+import java.util.List;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -33,10 +35,13 @@ public class BaseAliPan {
     private final Request request;
     private PdsLoginResult loginInfo;
     private static final String R_CODE = "code=(\\w+)";
-    private static final String BASE_PATH = "C:\\sync";
+    private static final String BASE_PATH = "D:\\sync";
+    private static final String REMOTE_PATH = "sync_path";
     private static final Integer PART_SIZE = 10 * 1024 * 1024;
     private static final String FILE_TYPE_FILE = "file";
     private static final String FILE_TYPE_FOLDER = "folder";
+    private String REMOTE_FILE_ID;
+    private static final ConcurrentSkipListSet<String> EXISTS_FILE_NAMES = new ConcurrentSkipListSet<>();
     private final Log log = GlobalLogFactory.get().createLog(BaseAliPan.class);
 
     public BaseAliPan() {
@@ -157,8 +162,8 @@ public class BaseAliPan {
         try (FileReader fileReader = new FileReader("en.js")) {
             instance.eval(fileReader);
             String limit = (String) instance.invokeFunction("h", instance.invokeFunction("m", accessToken));
-            long limitInt = new BigInteger(limit.substring(0, 16), 16).longValue() & 0xFFFFFFFFL;
-            long left = size == 0 ? size : (limitInt % size);
+            BigInteger bigInteger = new BigInteger(limit.substring(0, 16), 16);
+            long left = size == 0 ? size : bigInteger.mod(BigInteger.valueOf(size)).longValueExact();
             long right = Math.min(left + 8, size);
             byte[] bytes = FileUtil.readBytes(filePath);
             int preSize = (int) Math.min(1024, size);
@@ -166,8 +171,8 @@ public class BaseAliPan {
             byte[] proofCodeLimit = new byte[(int) (right - left)];
             System.arraycopy(bytes, 0, preLimit, 0, preSize);
             System.arraycopy(bytes, (int) left, proofCodeLimit, 0, (int) (right - left));
-            String preHash = SecureUtil.sha1(new String(preLimit));
-            String contentHash = SecureUtil.sha1(new String(bytes));
+            String preHash = MD5Util.hashCode(preLimit, MD5Util.SHA1);
+            String contentHash = MD5Util.hashCode(new FileInputStream(file), MD5Util.SHA1);
             String proofCode = Base64Encoder.encode(proofCodeLimit);
             return new EncFileInfoEntity(name, size, preHash, contentHash, proofCode);
         } catch (IOException | ScriptException | NoSuchMethodException e) {
@@ -176,46 +181,47 @@ public class BaseAliPan {
         return null;
     }
 
-    public void fileExists(String parentFileId, EncFileInfoEntity fileInfo) {
+    public FileExistsEntity fileExists(String parentFileId, EncFileInfoEntity fileInfo) {
         HashMap<String, Object> map = new HashMap<>();
         map.put("drive_id", loginInfo.getDefaultDriveId());
         map.put("part_info_list", FileUtils.getFileParts(fileInfo.getFileSize(), PART_SIZE));
         map.put("parent_file_id", parentFileId);
         map.put("name", fileInfo.getFileName());
         map.put("type", "file");
-        map.put("check_name_mode", "auto_rename");
+//        refuse auto_rename
+        map.put("check_name_mode", "refuse");
         map.put("size", fileInfo.getFileSize());
         map.put("pre_hash", fileInfo.getPreHash());
         HttpResponse response = request.postJson("https://api.aliyundrive.com/adrive/v2/file/createWithFolders", map);
-        System.out.println(response.body());
+        return JsonUtils.responseToBean(response, FileExistsEntity.class);
     }
 
-    public void createWithFolders(String parentFileId, EncFileInfoEntity fileInfo, String mode) {
+    public FileExistsEntity createFile(String parentFileId, EncFileInfoEntity fileInfo) {
         HashMap<String, Object> map = new HashMap<>();
         map.put("drive_id", loginInfo.getDefaultDriveId());
         map.put("name", fileInfo.getFileName());
         map.put("parent_file_id", parentFileId);
-        map.put("type", mode);
-        if (FILE_TYPE_FILE.equals(mode)) {
-            map.put("part_info_list", FileUtils.getFileParts(fileInfo.getFileSize(), PART_SIZE));
-            map.put("check_name_mode", "auto_rename");
-            map.put("size", fileInfo.getFileName());
-            map.put("content_hash", fileInfo.getContentHash());
-            map.put("content_hash_name", "sha1");
-            map.put("proof_code", fileInfo.getProofCode());
-            map.put("proof_version", "v1");
-        }
-        if (FILE_TYPE_FOLDER.equals(mode)) {
-            map.put("check_name_mode", "refuse");
-        }
-        HttpResponse response = request.post("https://api.aliyundrive.com/adrive/v2/file/createWithFolders", map);
-        System.out.println(response.body());
+        map.put("type", FILE_TYPE_FILE);
+        map.put("part_info_list", FileUtils.getFileParts(fileInfo.getFileSize(), PART_SIZE));
+        map.put("check_name_mode", "refuse");
+        map.put("size", fileInfo.getFileSize());
+        map.put("content_hash", fileInfo.getContentHash());
+        map.put("content_hash_name", "sha1");
+        map.put("proof_code", fileInfo.getProofCode());
+        map.put("proof_version", "v1");
+        HttpResponse response = request.postJson("https://api.aliyundrive.com/adrive/v2/file/createWithFolders", map);
+        return JsonUtils.responseToBean(response, FileExistsEntity.class);
     }
 
-
-    public void uploadFile(String parentFileId, String filePath) {
-        EncFileInfoEntity fileInfo = getFileInfo(filePath);
-        fileExists(parentFileId, fileInfo);
+    public FolderCreateEntity createWithFolders(String parentFileId, String name) {
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("drive_id", loginInfo.getDefaultDriveId());
+        map.put("name", name);
+        map.put("parent_file_id", parentFileId);
+        map.put("type", FILE_TYPE_FOLDER);
+        map.put("check_name_mode", "refuse");
+        HttpResponse response = request.postJson("https://api.aliyundrive.com/adrive/v2/file/createWithFolders", map);
+        return JsonUtils.responseToBean(response, FolderCreateEntity.class);
     }
 
     public void startLogin() {
@@ -258,7 +264,6 @@ public class BaseAliPan {
                 loginInfo.setRefreshToken(refreshToken);
                 log.info("将RefreshToken保存到本地");
                 JsonUtils.writeBean(loginInfo, "loginInfo");
-//                getFileList("root");
                 break;
             }
         }
@@ -272,6 +277,10 @@ public class BaseAliPan {
             }
         }
         String fileName = path + File.separator + name;
+        if (EXISTS_FILE_NAMES.contains(fileName)) {
+            log.info("该文件已经存在于本地无需下载" + fileName);
+            return;
+        }
         HashMap<String, Object> map = new HashMap<>();
         map.put("drive_id", loginInfo.getDefaultDriveId());
         map.put("file_id", fileId);
@@ -281,9 +290,8 @@ public class BaseAliPan {
         log.info("下载文件到" + fileName);
         String url = fileDownloadEntity.getUrl();
         //异步请求
-        try {
+        try (FileOutputStream fileOutputStream = new FileOutputStream(fileName)) {
             ResponseBody body = Request.download(url, Headers.of("Referer", "https://www.aliyundrive.com/"));
-            FileOutputStream fileOutputStream = new FileOutputStream(fileName);
             if (body != null) {
                 fileOutputStream.write(body.bytes());
             }
@@ -313,6 +321,186 @@ public class BaseAliPan {
         }
     }
 
+    public FileExistsEntity complete(String fileId, String uploadId) {
+        HashMap<String, Object> map = new HashMap<>();
+        map.put("drive_id", loginInfo.getDefaultDriveId());
+        map.put("file_id", fileId);
+        map.put("upload_id", uploadId);
+        HttpResponse response = request.postJson("https://api.aliyundrive.com/v2/file/complete", map);
+        return JsonUtils.responseToBean(response, FileExistsEntity.class);
+    }
+
+    private final HashMap<File, String> fileIdMap = new HashMap<>();
+
+    public String getFileIdByPath(String path) {
+        return fileIdMap.get(new File(path));
+    }
+
+    public String addFileId(String path, String fileId) {
+        log.info("添加文件id文件（夹）" + path + ":" + fileId);
+        return fileIdMap.put(new File(path), fileId);
+    }
+
+    public String removeFileId(String path) {
+        log.info("删除文件id文件（夹）" + path);
+        return fileIdMap.remove(new File(path));
+    }
+
+
+    public void uploadSingleFile(String realFileName, String remoteParentId) {
+        EncFileInfoEntity fileInfo = getFileInfo(realFileName);
+        FileExistsEntity fileExists = fileExists(remoteParentId, fileInfo);
+        if ("PreHashMatched".equals(fileExists.getCode())) {
+            FileExistsEntity file = createFile(remoteParentId, fileInfo);
+            addFileId(realFileName, file.getFileId());
+            log.info(realFileName + "快传成功");
+        } else {
+            List<PartInfoListEntity> partInfoList = fileExists.getPartInfoList();
+            if (partInfoList != null) {
+                try (FileInputStream fileInputStream = new FileInputStream(realFileName)) {
+                    int available = fileInputStream.available();
+                    int i = 0;
+                    while (available > 0) {
+                        byte[] bytes = new byte[Math.min(available, PART_SIZE)];
+                        fileInputStream.read(bytes);
+                        PartInfoListEntity partInfoListEntity = partInfoList.get(i);
+                        Response upload = Request.upload(partInfoListEntity.getUploadUrl(), bytes);
+                        int code = upload.code();
+                        if (code == 200) {
+                            log.info("上传成功：" + partInfoListEntity);
+                        } else {
+                            log.info("上传失败：" + partInfoListEntity);
+                        }
+                        if (partInfoList.size() == ++i) {
+                            FileExistsEntity complete = complete(fileExists.getFileId(), fileExists.getUploadId());
+                            addFileId(realFileName, complete.getFileId());
+                            log.info("complete:" + complete);
+                            log.info(realFileName + "上传完毕");
+                        }
+                        available = fileInputStream.available();
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    public void uploadFile(String remoteParentId, String filePath) {
+        addFileId(filePath, remoteParentId);
+        File file = new File(filePath);
+        for (String fileName : Objects.requireNonNull(file.list())) {
+            String realFileName = filePath + File.separator + fileName;
+            if (FileUtil.isDirectory(realFileName)) {
+                FolderCreateEntity withFolders = createWithFolders(remoteParentId, fileName);
+                if (withFolders.isExist()) {
+                    log.info("该目录已经存在：root" + realFileName.replace(BASE_PATH, ""));
+                } else {
+                    log.info("服务器创建目录成功：root" + realFileName.replace(BASE_PATH, ""));
+                }
+                uploadFile(withFolders.getFileId(), realFileName);
+            }
+            if (FileUtil.isFile(realFileName)) {
+                uploadSingleFile(realFileName, remoteParentId);
+                EXISTS_FILE_NAMES.add(realFileName);
+            }
+        }
+    }
+
+    public String getFileId(String... path) {
+        String fileId = "root";
+        for (String name : path) {
+            FolderEntity fileList = getFolderFileList(fileId);
+            ItemsEntity item = fileList.getItemByName(name);
+            if (item == null) {
+                FolderCreateEntity withFolders = createWithFolders(fileId, name);
+                fileId = withFolders.getFileId();
+
+            } else {
+                fileId = item.getFileId();
+            }
+        }
+        return fileId;
+    }
+
+    private final LinkedBlockingQueue<WatchRun> watchRuns = new LinkedBlockingQueue<>();
+
+    public String getFolderId(String path) {
+        File file = new File(path);
+        File file2 = new File(BASE_PATH);
+        Stack<String> stack = new Stack<>();
+        if (Objects.equals(file, file2)) {
+            return REMOTE_FILE_ID;
+        }
+        do {
+            stack.push(file.getName());
+            file = file.getParentFile();
+        } while (!Objects.equals(file, file2));
+        String parentId = REMOTE_FILE_ID;
+        String absPath = BASE_PATH;
+        while (!stack.isEmpty()) {
+            String pop = stack.pop();
+            absPath += (File.separator + pop);
+            if (FileUtil.isDirectory(absPath)) {
+                FolderCreateEntity withFolders = createWithFolders(parentId, pop);
+                parentId = withFolders.getFileId();
+            } else {
+                List<ItemsEntity> itemsEntity = getFolderFileList(parentId).getItems();
+                for (ItemsEntity entity : itemsEntity) {
+                    if (Objects.equals(pop, entity.getName())) {
+                        addFileId(absPath, entity.getFileId());
+                        return entity.getFileId();
+                    }
+                }
+            }
+            addFileId(absPath, parentId);
+        }
+        return parentId;
+    }
+
+    public void init() {
+        fileIdMap.clear();
+        EXISTS_FILE_NAMES.clear();
+        REMOTE_FILE_ID = getFileId("code", "abc");
+        log.info("开始执行双端同步，该操作只执行一次，后续本地文件会向远程同步");
+        uploadFile(REMOTE_FILE_ID, BASE_PATH);
+        download(BASE_PATH, REMOTE_FILE_ID);
+        log.info("双端同步执行完毕，后续只会本地同步到远程");
+    }
+
+    private WatchMonitor watchMonitor;
+
+    public void refreshFolderWatch() {
+        log.info("刷新文件Watch。。。");
+        watchMonitor = WatchMonitor.create(BASE_PATH, 100, WatchMonitor.EVENTS_ALL);
+        BaseAliPan baseAliPan = this;
+        watchMonitor.watch(new Watcher() {
+            @Override
+            public void onCreate(WatchEvent<?> event, Path currentPath) {
+                watchRuns.add(new WatchRun(event, currentPath));
+                watchRuns.poll().run(baseAliPan);
+            }
+
+            @Override
+            public void onModify(WatchEvent<?> event, Path currentPath) {
+                watchRuns.add(new WatchRun(event, currentPath));
+                watchRuns.poll().run(baseAliPan);
+            }
+
+            @Override
+            public void onDelete(WatchEvent<?> event, Path currentPath) {
+                watchRuns.add(new WatchRun(event, currentPath));
+                watchRuns.poll().run(baseAliPan);
+            }
+
+            @Override
+            public void onOverflow(WatchEvent<?> event, Path currentPath) {
+                watchRuns.add(new WatchRun(event, currentPath));
+                watchRuns.poll().run(baseAliPan);
+            }
+        });
+    }
+
     public void run() {
         File file = new File("loginInfo");
         if (file.exists()) {
@@ -324,14 +512,20 @@ public class BaseAliPan {
         } else {
             startLogin();
         }
-        log.info("先从服务器同步到本地，该操作只执行一次，后续本地文件会向远程同步");
-//        download(BASE_PATH, "root");
-        uploadFile("root", "abc");
-//        createWithFolders("root", )
+        init();
+        try {
+            log.info("文件监控器开启");
+            FileListener.start(BASE_PATH, this);
+            log.info("文件监控器开启成功");
+        } catch (Exception e) {
+            log.info("文件监控器开启失败");
+            e.printStackTrace();
+        }
     }
 
     public static void main(String[] args) {
         BaseAliPan baseAliPan = new BaseAliPan();
         baseAliPan.run();
+
     }
 }

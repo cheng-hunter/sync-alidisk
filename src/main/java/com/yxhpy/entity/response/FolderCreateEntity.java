@@ -2,10 +2,9 @@ package com.yxhpy.entity.response;
 
 import lombok.*;
 
-import java.util.List;
-
 /**
  * @author liuguohao
+ * @date 2022/1/1 17:49
  */
 @Data
 @AllArgsConstructor
@@ -13,18 +12,14 @@ import java.util.List;
 @Getter
 @Setter
 @ToString
-public class FileExistsEntity {
+public class FolderCreateEntity {
     private String parentFileId;
-    private List<PartInfoListEntity> partInfoList;
-    private String uploadId;
-    private boolean rapidUpload;
     private String type;
     private String fileId;
     private String domainId;
     private String driveId;
     private String fileName;
     private String encryptMode;
-    private String location;
-    private String code;
-    private String message;
+    private String status;
+    private boolean exist;
 }
