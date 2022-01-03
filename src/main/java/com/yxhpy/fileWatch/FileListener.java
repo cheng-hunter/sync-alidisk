@@ -1,18 +1,13 @@
 package com.yxhpy.fileWatch;
 import java.io.File;
 import java.util.concurrent.TimeUnit;
-import java.util.logging.Logger;
 
 import cn.hutool.log.GlobalLogFactory;
 import cn.hutool.log.Log;
 import com.yxhpy.BaseAliPan;
-import org.apache.commons.io.filefilter.FileFilterUtils;
-import org.apache.commons.io.filefilter.HiddenFileFilter;
-import org.apache.commons.io.filefilter.IOFileFilter;
 import org.apache.commons.io.monitor.FileAlterationListenerAdaptor;
 import org.apache.commons.io.monitor.FileAlterationMonitor;
 import org.apache.commons.io.monitor.FileAlterationObserver;
-import lombok.extern.slf4j.Slf4j;
 /**
  * 文件变化监听器
  * 在Apache的Commons-IO中有关于文件的监控功能的代码. 文件监控的原理如下：

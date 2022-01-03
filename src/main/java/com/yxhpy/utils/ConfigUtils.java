@@ -1,5 +1,6 @@
 package com.yxhpy.utils;
 
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Properties;
@@ -11,16 +12,26 @@ public class ConfigUtils {
     private static Properties properties;
     static {
         try {
-            InputStream resource = ConfigUtils.class.getClassLoader().getResourceAsStream("config.properties");
+            InputStream resource = new FileInputStream("config.properties");
             properties = new Properties();
             properties.load(resource);
         } catch (IOException e) {
             e.printStackTrace();
         }
     }
-    public static String getConfig(String key){
+    public static String getConfigString(String key){
         return (String) properties.get(key);
     }
+
+
+    public static Boolean getConfigBoolean(String key){
+        return Boolean.valueOf((String) properties.get(key));
+    }
+
+    public static Integer getConfigInteger(String key){
+        return Integer.valueOf((String) properties.get(key));
+    }
+
     public static Properties getProperties() {
         return properties;
     }

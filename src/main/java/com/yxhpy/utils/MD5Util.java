@@ -4,6 +4,7 @@ import cn.hutool.core.codec.Base64Encoder;
 import cn.hutool.core.io.FileUtil;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -39,7 +40,6 @@ public class MD5Util {
             while ((length = fis.read(buffer, 0, 1024)) != -1) {
                 md.update(buffer, 0, length);
             }
-            fis.close();
             byte[] md5Bytes = md.digest();
             BigInteger bigInt = new BigInteger(1, md5Bytes);
             return bigInt.toString(16);

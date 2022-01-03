@@ -28,4 +28,26 @@ public class ItemsEntity {
     private String parentFileId;
     private String encryptMode;
     private String revisionId;
+    private String contentType;
+    private String fileExtension;
+    private String mimeType;
+    private String mimeExtension;
+    private int size;
+    private String userMeta;
+    private String uploadId;
+    private String crc64Hash;
+    private String contentHash;
+    private String contentHashName;
+    private String downloadUrl;
+    private String url;
+    private String thumbnail;
+    private String category;
+    private int punishFlag;
+    private String creatorType;
+    private String creatorId;
+    private String creatorName;
+    private String lastModifierType;
+    private String lastModifierId;
+    private String lastModifierName;
+
 }

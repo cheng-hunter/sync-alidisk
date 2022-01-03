@@ -52,9 +52,6 @@ public class WatchRun {
                 aliPan.removeFileId(absName);
                 log.info(absName + "删除成功");
             }
-            if (FileUtil.isDirectory(absName)){
-                aliPan.refreshFolderWatch();
-            }
         }
     }
 }
