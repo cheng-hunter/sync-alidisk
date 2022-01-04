@@ -3,6 +3,7 @@ package com.yxhpy.utils;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.Properties;
 
 /**
@@ -20,7 +21,7 @@ public class ConfigUtils {
         }
     }
     public static String getConfigString(String key){
-        return (String) properties.get(key);
+        return new String(properties.getProperty(key).getBytes(StandardCharsets.ISO_8859_1), StandardCharsets.UTF_8);
     }
 
 
