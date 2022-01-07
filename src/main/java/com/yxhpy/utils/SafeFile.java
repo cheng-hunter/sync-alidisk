@@ -1,5 +1,7 @@
 package com.yxhpy.utils;
 
+import com.yxhpy.conifg.RequestConfig;
+
 import java.io.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -50,6 +52,13 @@ public class SafeFile {
         return (byte) (enc ^ (src ^ salt));
     }
 
+
+    public static SafeFile getInstance(){
+        SafeFile safeFile = new SafeFile(RequestConfig.SAFE_PASSWORD, RequestConfig.SAFE_PASSWORD_SALT);
+        safeFile.setStep(RequestConfig.PART_SIZE);
+        safeFile.setEnable(RequestConfig.SAFE_PASSWORD_ENABLE);
+        return safeFile;
+    }
 
     public void handler(byte[] bytes, boolean encode) {
         if (!enable) {

@@ -8,7 +8,6 @@ import cn.hutool.log.Log;
 import cn.hutool.script.JavaScriptEngine;
 import com.yxhpy.conifg.RequestConfig;
 import com.yxhpy.fileWatch.FileListener;
-import com.yxhpy.fileWatch.WatchRun;
 import com.yxhpy.entity.DownloadEntity;
 import com.yxhpy.entity.EncFileInfoEntity;
 import com.yxhpy.entity.response.*;
@@ -19,7 +18,6 @@ import okhttp3.*;
 import javax.script.*;
 import java.io.*;
 import java.math.BigInteger;
-import java.net.URL;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -172,9 +170,7 @@ public class BaseAliPan {
             long left = size == 0 ? size : bigInteger.mod(BigInteger.valueOf(size)).longValueExact();
             long right = Math.min(left + 8, size);
             byte[] bytes = FileUtil.readBytes(filePath);
-            SafeFile safeFile = new SafeFile(RequestConfig.SAFE_PASSWORD, RequestConfig.SAFE_PASSWORD_SALT);
-            safeFile.setStep(PART_SIZE);
-            safeFile.setEnable(RequestConfig.SAFE_PASSWORD_ENABLE);
+            SafeFile safeFile = SafeFile.getInstance();
             safeFile.handler(bytes, true);
             int preSize = (int) Math.min(1024, size);
             byte[] preLimit = new byte[preSize];
@@ -304,9 +300,7 @@ public class BaseAliPan {
             ResponseBody body = Request.download(url, Headers.of("Referer", "https://www.aliyundrive.com/"));
             if (body != null) {
                 byte[] bytes = body.bytes();
-                SafeFile safeFile = new SafeFile(RequestConfig.SAFE_PASSWORD, RequestConfig.SAFE_PASSWORD_SALT);
-                safeFile.setStep(PART_SIZE);
-                safeFile.setEnable(RequestConfig.SAFE_PASSWORD_ENABLE);
+                SafeFile safeFile = SafeFile.getInstance();
                 safeFile.handler(bytes, false);
                 fileOutputStream.write(bytes);
             }
@@ -381,9 +375,7 @@ public class BaseAliPan {
                     while (available > 0) {
                         byte[] bytes = new byte[Math.min(available, PART_SIZE)];
                         fileInputStream.read(bytes);
-                        SafeFile safeFile = new SafeFile(RequestConfig.SAFE_PASSWORD, RequestConfig.SAFE_PASSWORD_SALT);
-                        safeFile.setStep(PART_SIZE);
-                        safeFile.setEnable(RequestConfig.SAFE_PASSWORD_ENABLE);
+                        SafeFile safeFile = SafeFile.getInstance();
                         safeFile.handler(bytes, true);
                         PartInfoListEntity partInfoListEntity = partInfoList.get(i);
                         Response upload = Request.upload(partInfoListEntity.getUploadUrl(), bytes);
@@ -490,7 +482,6 @@ public class BaseAliPan {
         remoteFileId = getFolderId(BASE_PATH + File.separator + REMOTE_PATH);
         log.info("开始执行双端同步，该操作只执行一次，后续本地文件会向远程同步");
         uploadFile(remoteFileId, BASE_PATH);
-        download(BASE_PATH, remoteFileId);
         log.info("双端同步执行完毕，后续只会本地同步到远程");
         startFileWatch();
     }
@@ -522,6 +513,10 @@ public class BaseAliPan {
     }
 
     public void run() {
+        File basePath = new File(BASE_PATH);
+        if (!basePath.exists()){
+            basePath.mkdirs();
+        }
         File file = new File("loginInfo");
         if (file.exists()) {
             PdsLoginResult loginInfo = JsonUtils.readBean("loginInfo", PdsLoginResult.class);
