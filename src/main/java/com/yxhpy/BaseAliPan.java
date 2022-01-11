@@ -480,9 +480,9 @@ public class BaseAliPan {
         fileIdMap.clear();
         EXISTS_FILE_NAMES.clear();
         remoteFileId = getFolderId(BASE_PATH + File.separator + REMOTE_PATH);
-        log.info("开始执行双端同步，该操作只执行一次，后续本地文件会向远程同步");
+        log.info("开始执行同步，该操作只执行一次，后续本地文件会向远程同步");
         uploadFile(remoteFileId, BASE_PATH);
-        log.info("双端同步执行完毕，后续只会本地同步到远程");
+        log.info("同步执行完毕，后续只会本地同步到远程");
         startFileWatch();
     }
 
