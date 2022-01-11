@@ -19,13 +19,20 @@ public class MD5Util {
     public static final String MD5 = "MD5";
     public static final String SHA256 = "SHA-256";
 
+    private static String validHexStr(String str){
+        if (str.length() % 2 != 0) {
+            return "0" + str;
+        }
+        return str;
+    }
+
     public static String hashCode(byte[] data, String type) {
         try {
             MessageDigest md = MessageDigest.getInstance(type);
             md.update(data, 0, data.length);
             byte[] md5Bytes = md.digest();
             BigInteger bigInt = new BigInteger(1, md5Bytes);
-            return bigInt.toString(16);
+            return validHexStr(bigInt.toString(16));
         } catch (Exception e) {
             e.printStackTrace();
             return "";
@@ -42,7 +49,7 @@ public class MD5Util {
             }
             byte[] md5Bytes = md.digest();
             BigInteger bigInt = new BigInteger(1, md5Bytes);
-            return bigInt.toString(16);
+            return validHexStr(bigInt.toString(16));
         } catch (Exception e) {
             e.printStackTrace();
             return "";
