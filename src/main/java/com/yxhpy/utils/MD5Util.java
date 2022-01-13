@@ -50,8 +50,7 @@ public class MD5Util {
                 md.update(buffer, 0, length);
             }
             byte[] md5Bytes = md.digest();
-            BigInteger bigInt = new BigInteger(1, md5Bytes);
-            return validHexStr(bigInt.toString(16));
+            return HexUtil.encodeHexStr(md5Bytes, true);
         } catch (Exception e) {
             e.printStackTrace();
             return "";
