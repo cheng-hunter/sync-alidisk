@@ -2,6 +2,7 @@ package com.yxhpy.utils;
 
 import cn.hutool.core.codec.Base64Encoder;
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.util.HexUtil;
 
 import java.io.File;
 import java.io.IOException;
@@ -9,6 +10,7 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.security.MessageDigest;
+import java.util.Objects;
 
 /**
  * @author liuguohao
@@ -26,13 +28,13 @@ public class MD5Util {
         return str;
     }
 
+
     public static String hashCode(byte[] data, String type) {
         try {
             MessageDigest md = MessageDigest.getInstance(type);
             md.update(data, 0, data.length);
             byte[] md5Bytes = md.digest();
-            BigInteger bigInt = new BigInteger(1, md5Bytes);
-            return validHexStr(bigInt.toString(16));
+            return HexUtil.encodeHexStr(md5Bytes, true);
         } catch (Exception e) {
             e.printStackTrace();
             return "";
@@ -65,11 +67,8 @@ public class MD5Util {
     }
 
     public static void main(String[] args) {
-        File file = new File("D:\\sync\\ideaIU-2021.2.1.exe");
+        File file = new File("C:\\Users\\liuguohao\\Desktop\\新建Microsoft Excel 工作表.xlsx");
         byte[] bytes = FileUtil.readBytes(file);
-        byte[] proofCodeLimit = new byte[8];
-        System.arraycopy(bytes, 414605323, proofCodeLimit, 0, 8);
-        String proofCode = Base64Encoder.encode(proofCodeLimit);
-        System.out.println(proofCode);
+        System.out.println(hashCode(bytes, MD5Util.SHA1));
     }
 }
