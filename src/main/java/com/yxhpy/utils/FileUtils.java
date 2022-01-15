@@ -1,6 +1,6 @@
 package com.yxhpy.utils;
 
-import java.io.File;
+import java.io.*;
 import java.nio.file.Path;
 import java.util.*;
 
@@ -25,6 +25,25 @@ public class FileUtils {
         }
         return res;
     }
+    
+    
+    public static byte[] readLimitBytes(File file, int start, int end){
+        byte[] bytes = new byte[end - start];
+        try (FileInputStream stream = new FileInputStream(file)){
+            for (int i = 0; i < start; i++) {
+                stream.read();
+            }
+            int j = 0;
+            for (int i = start; i < end; i++) {
+                bytes[j++] = (byte) stream.read();
+            }
+            
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return bytes;
+    }
+
 
     public static void main(String[] args) {
         File file = new File("D:\\sync\\新建文件夹1");

@@ -8,6 +8,7 @@ import cn.hutool.log.Log;
 import cn.hutool.script.JavaScriptEngine;
 import com.yxhpy.conifg.RequestConfig;
 import com.yxhpy.fileWatch.FileListener;
+import com.yxhpy.fileWatch.WatchRun;
 import com.yxhpy.entity.DownloadEntity;
 import com.yxhpy.entity.EncFileInfoEntity;
 import com.yxhpy.entity.response.*;
@@ -18,6 +19,7 @@ import okhttp3.*;
 import javax.script.*;
 import java.io.*;
 import java.math.BigInteger;
+import java.net.URL;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -163,22 +165,18 @@ public class BaseAliPan {
         String accessToken = loginInfo.getAccessToken();
         JavaScriptEngine instance = JavaScriptEngine.instance();
         InputStream resourceAsStream = BaseAliPan.class.getClassLoader().getResourceAsStream("en.js");
-        try (InputStreamReader fileReader = new InputStreamReader(resourceAsStream)) {
+        try (InputStreamReader fileReader = new InputStreamReader(resourceAsStream);
+            InputStream stream = new FileInputStream(file)) {
             instance.eval(fileReader);
             String limit = (String) instance.invokeFunction("h", instance.invokeFunction("m", accessToken));
             BigInteger bigInteger = new BigInteger(limit.substring(0, 16), 16);
             long left = size == 0 ? size : bigInteger.mod(BigInteger.valueOf(size)).longValueExact();
             long right = Math.min(left + 8, size);
-            byte[] bytes = FileUtil.readBytes(filePath);
-            SafeFile safeFile = SafeFile.getInstance();
-            safeFile.handler(bytes, true);
             int preSize = (int) Math.min(1024, size);
-            byte[] preLimit = new byte[preSize];
-            byte[] proofCodeLimit = new byte[(int) (right - left)];
-            System.arraycopy(bytes, 0, preLimit, 0, preSize);
-            System.arraycopy(bytes, (int) left, proofCodeLimit, 0, (int) (right - left));
+            byte[] preLimit = FileUtils.readLimitBytes(file, 0, preSize);
+            byte[] proofCodeLimit = FileUtils.readLimitBytes(file, (int)left, (int)right);
             String preHash = MD5Util.hashCode(preLimit, MD5Util.SHA1);
-            String contentHash = MD5Util.hashCode(bytes, MD5Util.SHA1);
+            String contentHash = MD5Util.hashCode(stream, MD5Util.SHA1);
             String proofCode = Base64Encoder.encode(proofCodeLimit);
             return new EncFileInfoEntity(name, size, preHash, contentHash, proofCode);
         } catch (IOException | ScriptException | NoSuchMethodException e) {
@@ -517,6 +515,7 @@ public class BaseAliPan {
         if (!basePath.exists()){
             basePath.mkdirs();
         }
+        int delayRestart = 5000;
         File file = new File("loginInfo");
         if (file.exists()) {
             PdsLoginResult loginInfo = JsonUtils.readBean("loginInfo", PdsLoginResult.class);
@@ -527,10 +526,27 @@ public class BaseAliPan {
         } else {
             startLogin();
         }
-        if (RequestConfig.PROVIDER) {
-            initDefault();
-        } else {
-            initDownloader();
+        while (true){
+            try {
+                if (RequestConfig.PROVIDER) {
+                    initDefault();
+                } else {
+                    initDownloader();
+                }
+                Thread.currentThread().join();
+            } catch (Exception e){
+                log.error("错误：" + e.getMessage());
+                if (RequestConfig.ENABLE_RESTART){
+                    log.info(delayRestart + "毫秒后开始重新启动项目");
+                    try {
+                        Thread.sleep(delayRestart);
+                    } catch (InterruptedException ex) {
+                        ex.printStackTrace();
+                    }
+                } else {
+                    break;
+                }
+            }
         }
     }
 
