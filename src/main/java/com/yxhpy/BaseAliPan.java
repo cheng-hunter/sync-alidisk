@@ -5,10 +5,8 @@ import cn.hutool.core.io.FileUtil;
 import cn.hutool.http.*;
 import cn.hutool.log.GlobalLogFactory;
 import cn.hutool.log.Log;
-import cn.hutool.script.JavaScriptEngine;
 import com.yxhpy.conifg.RequestConfig;
 import com.yxhpy.fileWatch.FileListener;
-import com.yxhpy.fileWatch.WatchRun;
 import com.yxhpy.entity.DownloadEntity;
 import com.yxhpy.entity.EncFileInfoEntity;
 import com.yxhpy.entity.response.*;
@@ -16,10 +14,8 @@ import com.yxhpy.enumCode.QrStatus;
 import com.yxhpy.utils.*;
 import okhttp3.*;
 
-import javax.script.*;
 import java.io.*;
 import java.math.BigInteger;
-import java.net.URL;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -51,7 +47,6 @@ public class BaseAliPan {
 
     public BaseAliPan() {
         request = new Request();
-
     }
 
     public DataEntity getLoginQr() {
@@ -163,23 +158,25 @@ public class BaseAliPan {
         String name = FileUtil.getName(file);
         long size = FileUtil.size(file);
         String accessToken = loginInfo.getAccessToken();
-        JavaScriptEngine instance = JavaScriptEngine.instance();
-        InputStream resourceAsStream = BaseAliPan.class.getClassLoader().getResourceAsStream("en.js");
-        try (InputStreamReader fileReader = new InputStreamReader(resourceAsStream);
-            InputStream stream = new FileInputStream(file)) {
-            instance.eval(fileReader);
-            String limit = (String) instance.invokeFunction("h", instance.invokeFunction("m", accessToken));
-            BigInteger bigInteger = new BigInteger(limit.substring(0, 16), 16);
-            long left = size == 0 ? size : bigInteger.mod(BigInteger.valueOf(size)).longValueExact();
-            long right = Math.min(left + 8, size);
-            int preSize = (int) Math.min(1024, size);
-            byte[] preLimit = FileUtils.readLimitBytes(file, 0, preSize);
-            byte[] proofCodeLimit = FileUtils.readLimitBytes(file, (int)left, (int)right);
-            String preHash = MD5Util.hashCode(preLimit, MD5Util.SHA1);
+        String limit = MD5Util.hashCode(accessToken.getBytes(), MD5Util.MD5);
+        BigInteger bigInteger = new BigInteger(limit.substring(0, 16), 16);
+        long left = size == 0 ? size : bigInteger.mod(BigInteger.valueOf(size)).longValueExact();
+        long right = Math.min(left + 8, size);
+        int preSize = (int) Math.min(1024, size);
+        try (FileInputStream stream = new FileInputStream(file)) {
             String contentHash = MD5Util.hashCode(stream, MD5Util.SHA1);
+
+            byte[] preLimit = new byte[preSize];
+            stream.getChannel().position(0);
+            stream.read(preLimit);
+            String preHash = MD5Util.hashCode(preLimit, MD5Util.SHA1);
+
+            stream.getChannel().position(left);
+            byte[] proofCodeLimit = new byte[(int)(right - left)];
+            stream.read(proofCodeLimit);
             String proofCode = Base64Encoder.encode(proofCodeLimit);
             return new EncFileInfoEntity(name, size, preHash, contentHash, proofCode);
-        } catch (IOException | ScriptException | NoSuchMethodException e) {
+        } catch (IOException e) {
             e.printStackTrace();
         }
         return null;
@@ -192,7 +189,7 @@ public class BaseAliPan {
         map.put("parent_file_id", parentFileId);
         map.put("name", fileInfo.getFileName());
         map.put("type", "file");
-//        refuse auto_rename
+        //        refuse auto_rename
         map.put("check_name_mode", "refuse");
         map.put("size", fileInfo.getFileSize());
         map.put("pre_hash", fileInfo.getPreHash());
@@ -281,7 +278,7 @@ public class BaseAliPan {
             }
         }
         String fileName = path + File.separator + name;
-        if (Objects.equals(getFileIdByPath(fileName), fileId)){
+        if (Objects.equals(getFileIdByPath(fileName), fileId)) {
             return;
         }
         addFileId(fileName, fileId);
@@ -426,7 +423,6 @@ public class BaseAliPan {
             if (item == null) {
                 FolderCreateEntity withFolders = createWithFolders(fileId, name);
                 fileId = withFolders.getFileId();
-
             } else {
                 fileId = item.getFileId();
             }
@@ -512,7 +508,7 @@ public class BaseAliPan {
 
     public void run() {
         File basePath = new File(BASE_PATH);
-        if (!basePath.exists()){
+        if (!basePath.exists()) {
             basePath.mkdirs();
         }
         int delayRestart = 5000;
@@ -526,7 +522,7 @@ public class BaseAliPan {
         } else {
             startLogin();
         }
-        while (true){
+        while (true) {
             try {
                 if (RequestConfig.PROVIDER) {
                     initDefault();
@@ -534,9 +530,9 @@ public class BaseAliPan {
                     initDownloader();
                 }
                 Thread.currentThread().join();
-            } catch (Exception e){
+            } catch (Exception e) {
                 log.error("错误：" + e.getMessage());
-                if (RequestConfig.ENABLE_RESTART){
+                if (RequestConfig.ENABLE_RESTART) {
                     log.info(delayRestart + "毫秒后开始重新启动项目");
                     try {
                         Thread.sleep(delayRestart);
