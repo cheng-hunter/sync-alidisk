@@ -19,7 +19,11 @@ import java.math.BigInteger;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -290,7 +294,16 @@ public class BaseAliPan {
         log.info("获取文件成功：" + fileDownloadEntity);
         log.info("下载文件到" + fileName);
         String url = fileDownloadEntity.getUrl();
-        //异步请求
+        if (RequestConfig.MULTI_THREAD){
+            //多线程下载 支持断点
+            doDownload(fileName,fileDownloadEntity);
+        }else{
+            //异步请求
+            doDownload(fileName, url);
+        }
+    }
+
+    private void doDownload(String fileName, String url) {
         try (FileOutputStream fileOutputStream = new FileOutputStream(fileName)) {
             ResponseBody body = Request.download(url, Headers.of("Referer", "https://www.aliyundrive.com/"));
             if (body != null) {
@@ -301,6 +314,112 @@ public class BaseAliPan {
             }
             log.info("下载完成" + fileName);
         } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+    /**
+     * 下载多线程方式 支持断点续传
+     *
+     * @return void
+     * @since 2022年06月16日 14:51:13
+     * @author zengzhixing
+     */
+    private void doDownload(String fileName,
+                            FileDownloadEntity fileDownloadEntity) {
+        ExecutorService service = Executors
+                .newFixedThreadPool(RequestConfig.MULTI_THREAD_NUM == 0
+                        ? Runtime.getRuntime().availableProcessors()
+                        : RequestConfig.MULTI_THREAD_NUM);
+        int downloadPartSize = RequestConfig.MULTI_SIZE;
+        // 多线程分段下载
+        try (FileOutputStream fileOutputStream = new FileOutputStream(
+                fileName)) {
+            int size = fileDownloadEntity.getSize();
+            log.info("size = {}", size);
+            int cnt = size % downloadPartSize == 0 ? size / downloadPartSize
+                    : size / downloadPartSize + 1;
+            List<File> files = new ArrayList<>();
+            AtomicInteger finCnt = new AtomicInteger();
+            for (int i = 0; i < cnt; i++) {
+                File tempFile = new File(fileName + ".temp" + i);
+                files.add(tempFile);
+                int start = i * downloadPartSize;
+                int end = Math.min(size - 1, (i + 1) * downloadPartSize - 1);
+                if (tempFile.exists() && tempFile.length() == end - start + 1) {
+                    log.info("{} has download", tempFile.getName());
+                    finCnt.incrementAndGet();
+                    continue;
+                }
+                service.submit(() -> {
+                    int reTry = RequestConfig.MULTI_TRY;
+                    while (reTry > 0) {
+                        reTry--;
+                        try (BufferedOutputStream bos = new BufferedOutputStream(
+                                new FileOutputStream(tempFile))) {
+                            log.info("start = {} end = {}", start, end);
+                            ResponseBody body = Request.download(
+                                    fileDownloadEntity.getUrl(),
+                                    Headers.of("Referer",
+                                            "https://www.aliyundrive.com/",
+                                            "Range",
+                                            "bytes=" + start + "-" + end));
+                            if (body != null) {
+                                byte[] bytes = body.bytes();
+                                SafeFile safeFile = SafeFile.getInstance();
+                                safeFile.handler(bytes, false);
+                                bos.write(bytes);
+                                bos.flush();
+                            }
+                            finCnt.incrementAndGet();
+                            return;
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                        }
+                    }
+                    log.info("{} try download fail", tempFile.getName());
+                });
+            }
+            service.shutdown();
+            while (!service.isTerminated()) {
+                TimeUnit.SECONDS.sleep(2);
+                log.info("download {} ......", fileName);
+            }
+            if (files.size() > finCnt.get()) {
+                log.info("filesSize = {} finCnt = {}", files.size(),
+                        finCnt.get());
+                log.info("download {} fail", fileName);
+            } else {
+                log.info("merge start");
+                mergeFile(fileOutputStream, files);
+                log.info("下载完成" + fileName);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * 合并下载的片段文件
+     *
+     * @return void
+     * @since 2022年06月16日 14:51:40
+     * @author zengzhixing
+     */
+    private void mergeFile(FileOutputStream fileOutputStream,
+                           List<File> files) {
+        try (BufferedOutputStream bos = new BufferedOutputStream(
+                fileOutputStream)) {
+            byte[] bytes = new byte[1024];
+            for (File file : files) {
+                FileInputStream in = new FileInputStream(file);
+                int len = 0;
+                while ((len = in.read(bytes)) != -1) {
+                    bos.write(bytes, 0, len);
+                }
+                in.close();
+            }
+            files.forEach(File::delete);
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
