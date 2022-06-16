@@ -2,10 +2,14 @@ package com.yxhpy;
 
 import cn.hutool.core.codec.Base64Encoder;
 import cn.hutool.core.io.FileUtil;
+import cn.hutool.core.lang.UUID;
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.http.*;
+import cn.hutool.json.JSONUtil;
 import cn.hutool.log.GlobalLogFactory;
 import cn.hutool.log.Log;
 import com.yxhpy.conifg.RequestConfig;
+import com.yxhpy.entity.DownloadTempInfo;
 import com.yxhpy.fileWatch.FileListener;
 import com.yxhpy.entity.DownloadEntity;
 import com.yxhpy.entity.EncFileInfoEntity;
@@ -16,6 +20,7 @@ import okhttp3.*;
 
 import java.io.*;
 import java.math.BigInteger;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.ConcurrentSkipListSet;
@@ -24,6 +29,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -292,11 +300,28 @@ public class BaseAliPan {
         HttpResponse response = request.postJson("https://api.aliyundrive.com/v2/file/get_download_url", map);
         FileDownloadEntity fileDownloadEntity = JsonUtils.responseToBean(response, FileDownloadEntity.class);
         log.info("获取文件成功：" + fileDownloadEntity);
+		File targetFile = new File(fileName);
+		if (targetFile.exists()) {
+			// 目标文件已存在 校验文件摘要 文件不同才进行下载
+			try (FileInputStream stream = new FileInputStream(targetFile)) {
+				String contentHash = MD5Util.hashCode(stream,
+						fileDownloadEntity.getContentHashName());
+				if (contentHash.equalsIgnoreCase(
+						fileDownloadEntity.getContentHash())) {
+					log.info("{} no need update", fileName);
+					return;
+				}
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
         log.info("下载文件到" + fileName);
         String url = fileDownloadEntity.getUrl();
         if (RequestConfig.MULTI_THREAD){
-            //多线程下载 支持断点
-            doDownload(fileName,fileDownloadEntity);
+			// 多线程下载 支持断点（占用磁盘大）
+			// doDownload(fileName,fileDownloadEntity);
+			// 多线程下载 支持断点（新方案不会占用多余空间）
+			doDownload2(fileName, fileDownloadEntity);
         }else{
             //异步请求
             doDownload(fileName, url);
@@ -423,6 +448,199 @@ public class BaseAliPan {
             e.printStackTrace();
         }
     }
+
+    /**
+     * 下载多线程方式 支持断点续传
+     *
+     * @return void
+     * @since 2022年06月16日 14:51:13
+     * @author zengzhixing
+     */
+	private void doDownload2(String fileName,
+			FileDownloadEntity fileDownloadEntity) {
+		ExecutorService service = Executors
+				.newFixedThreadPool(RequestConfig.MULTI_THREAD_NUM == 0
+						? Runtime.getRuntime().availableProcessors()
+						: RequestConfig.MULTI_THREAD_NUM);
+		int downloadPartSize = RequestConfig.MULTI_SIZE;
+		// 多线程分段下载
+		File downloading = new File(fileName + ".downloading");
+		DownloadTempInfo tempInfo = null;
+        ReentrantReadWriteLock rwLock = new ReentrantReadWriteLock();
+        WriteLock writeLock = rwLock.writeLock();
+        try (RandomAccessFile randomAccessFile = new RandomAccessFile(
+				downloading, "rw")) {
+
+			tempInfo = getDownloadTempInfo(randomAccessFile,fileDownloadEntity);
+			if (tempInfo == null || tempInfo
+					.checkFileInfo(fileDownloadEntity) == Boolean.FALSE) {
+			    //没有信息或者信息检查不通过（文件已更改）
+				tempInfo = new DownloadTempInfo(fileDownloadEntity,
+						downloadPartSize);
+				updateDownloadTempInfo(randomAccessFile,fileDownloadEntity,tempInfo);
+			} else {
+				downloadPartSize = tempInfo.getPartSize();
+			}
+			int size = fileDownloadEntity.getSize();
+			log.info("size = {}", size);
+			int cnt = size % downloadPartSize == 0 ? size / downloadPartSize
+					: size / downloadPartSize + 1;
+			for (int i = 0; i < cnt; i++) {
+				service.submit(
+						getDownloadTas(i, downloadPartSize, size, tempInfo,
+								fileDownloadEntity, rwLock, randomAccessFile));
+                
+			}
+			service.shutdown();
+			while (!service.isTerminated()) {
+				TimeUnit.SECONDS.sleep(2);
+				log.info("download {} ......", fileName);
+			}
+			if (!tempInfo.isFinish()) {
+				log.info("finishCnt = {} partCnt = {}",
+						tempInfo.getFinish().size(), cnt);
+				log.info("download {} fail", fileName);
+			} else {
+                randomAccessFile.close();
+                String saveName = reNameFile(fileName, downloading, tempInfo,null);
+				log.info("下载完成 {} save to {}", fileName, saveName);
+			}
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+    }
+
+	private String reNameFile(String fileName, File downloading,
+			DownloadTempInfo tempInfo, String pre) {
+	    if (StrUtil.isNotBlank(pre)){
+            StringBuilder sb = new StringBuilder(fileName);
+            sb.insert(sb.lastIndexOf("."),"_"+pre);
+            fileName = sb.toString();
+        }
+		if (downloading.renameTo(new File(fileName))) {
+			try (RandomAccessFile finishFile = new RandomAccessFile(fileName,
+					"rw")) {
+				// 重命名成功 删除尾部信息
+				finishFile.setLength(tempInfo.getSize());
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		} else {
+			log.error("{} rename fail",downloading.getName());
+			if (StrUtil.isBlank(pre)) {
+				log.info("{} add fix try rename" ,downloading.getName());
+				//添加后缀尝试重命名
+				return reNameFile(fileName, downloading, tempInfo,
+						UUID.randomUUID().toString(true));
+			}else{
+                log.error("{} add fix try rename fail , please check" ,downloading.getName());
+            }
+        }
+		return fileName;
+    }
+
+    /**
+	 * 获取文件尾部的下载进度信息
+	 * 
+	 * @return com.yxhpy.entity.DownloadTempInfo
+	 * @since 2022年06月16日 17:59:13
+	 * @author zengzhixing
+	 */
+	private DownloadTempInfo getDownloadTempInfo(
+			RandomAccessFile randomAccessFile,
+			FileDownloadEntity fileDownloadEntity) {
+		// 读取最后的下载信息
+		try {
+			int size = fileDownloadEntity.getSize();
+			randomAccessFile.seek(size);
+            String line = randomAccessFile.readLine();
+            if (line == null) {
+				return null;
+			}
+            System.out.println(line);
+			return JSONUtil.toBean(line,
+					DownloadTempInfo.class);
+		} catch (IOException e) {
+			return null;
+		}
+	}
+
+	/**
+	 * 更新文件尾部的下载进度信息
+	 * 
+	 * @return void
+	 * @since 2022年06月16日 17:59:30
+	 * @author zengzhixing
+	 */
+	private void updateDownloadTempInfo(
+			RandomAccessFile randomAccessFile,
+			FileDownloadEntity fileDownloadEntity,
+            DownloadTempInfo tempInfo) {
+		// 更新下载信息到最后一行
+		try {
+			int size = fileDownloadEntity.getSize();
+			randomAccessFile.setLength(size);
+			randomAccessFile.seek(size);
+			randomAccessFile.write(tempInfo.toSaveJson().getBytes(StandardCharsets.UTF_8));
+		} catch (IOException e) {
+			e.getStackTrace();
+		}
+	}
+
+	/**
+	 * 获取文件片段的下载任务
+	 * 
+	 * @return java.lang.Runnable
+	 * @since 2022年06月16日 17:59:53
+	 * @author zengzhixing
+	 */
+	private Runnable getDownloadTas(int i,int downloadPartSize,int size,
+                                    DownloadTempInfo tempInfo,
+                                    FileDownloadEntity fileDownloadEntity,
+                                    ReentrantReadWriteLock rwLock,RandomAccessFile randomAccessFile){
+		return () -> {
+			int start = i * downloadPartSize;
+			int end = Math.min(size - 1, (i + 1) * downloadPartSize - 1);
+			if (tempInfo.getFinish().contains(i)) {
+				log.info("{} to {} has download", start, end);
+				return;
+			}
+			int reTry = RequestConfig.MULTI_TRY;
+			while (reTry > 0) {
+				reTry--;
+				try {
+					log.info("start = {} end = {}", start, end);
+					ResponseBody body = Request.download(
+							fileDownloadEntity.getUrl(),
+							Headers.of("Referer",
+									"https://www.aliyundrive.com/", "Range",
+									"bytes=" + start + "-" + end));
+					if (body != null) {
+						byte[] bytes = body.bytes();
+						SafeFile safeFile = SafeFile.getInstance();
+						safeFile.handler(bytes, false);
+                        WriteLock writeLock = rwLock.writeLock();
+						try {
+							writeLock.lock();
+							randomAccessFile.seek(start);
+							randomAccessFile.write(bytes);
+							tempInfo.getFinish().add(i);
+							// 更新下载进度信息到文件中
+							updateDownloadTempInfo(randomAccessFile,
+									fileDownloadEntity, tempInfo);
+						} finally {
+							writeLock.unlock();
+						}
+					}
+					return;
+				} catch (Exception e) {
+					e.printStackTrace();
+				}
+			}
+			log.info("{} try download fail");
+		};
+    }
+	
 
     private final Queue<DownloadEntity> downloadEntities = new LinkedBlockingQueue<>();
 
