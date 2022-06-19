@@ -13,7 +13,7 @@ public class ConfigUtils {
     private static Properties properties;
     static {
         try {
-            InputStream resource = new FileInputStream(ConfigUtils.class.getClassLoader().getResource("config.properties").getFile());
+            InputStream resource = new FileInputStream("config.properties");
             properties = new Properties();
             properties.load(resource);
         } catch (IOException e) {

@@ -1,7 +1,6 @@
 package com.yxhpy.utils;
 
 import java.io.*;
-import java.nio.file.Path;
 import java.util.*;
 
 /**
@@ -30,9 +29,7 @@ public class FileUtils {
     public static byte[] readLimitBytes(File file, int start, int end){
         byte[] bytes = new byte[end - start];
         try (FileInputStream stream = new FileInputStream(file)){
-            for (int i = 0; i < start; i++) {
-                stream.read();
-            }
+            stream.skip(start);
             int j = 0;
             for (int i = start; i < end; i++) {
                 bytes[j++] = (byte) stream.read();
