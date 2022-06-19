@@ -13,7 +13,7 @@ public class ConfigUtils {
     private static Properties properties;
     static {
         try {
-            InputStream resource = new FileInputStream("config.properties");
+            InputStream resource = new FileInputStream(ConfigUtils.class.getClassLoader().getResource("config.properties").getFile());
             properties = new Properties();
             properties.load(resource);
         } catch (IOException e) {
@@ -31,6 +31,11 @@ public class ConfigUtils {
 
     public static Integer getConfigInteger(String key){
         return Integer.valueOf((String) properties.get(key));
+    }
+
+    public static Integer getConfigInteger(String key, int def) {
+        return properties.get(key) == null ? def
+                : Integer.parseInt((String) properties.get(key));
     }
 
     public static Properties getProperties() {
